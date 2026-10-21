@@ -1,6 +1,6 @@
 [project]
-name = "maps-mcp"
-version = "0.5.2"
+name = "google-maps-keyless-mcp"
+version = "0.5.3"
 description = "Read-only MCP server for Google Maps travel times, routes, places and map images, without an API key"
 readme = "README.md"
 license = "MIT"
@@ -46,7 +46,8 @@ build-backend = "hatchling.build"
 packages = ["src/maps_mcp"]
 
 [project.scripts]
-maps-mcp = "maps_mcp.server:main"
+google-maps-keyless-mcp = "maps_mcp.server:main"
+maps-mcp = "maps_mcp.server:main"  # the image's entrypoint and earlier docs
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
