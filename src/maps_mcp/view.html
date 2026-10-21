@@ -1,0 +1,613 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Google Maps</title>
+<!--
+  maps_show_route / maps_show_places (MCP Apps, protocol 2026-01-26): the host loads this page in a sandboxed
+  frame, answers ui/initialize, then sends the tool's input and result. The map is drawn here from Google Maps
+  tiles (www.google.com/maps/vt) and place photos come from Google's photo hosts: the resource's CSP lists exactly
+  those hosts. The page connects nowhere and opens links through the host (ui/open-link). Everything is set as
+  text, never as HTML: names, addresses and instructions come from Google, notes from the agent.
+-->
+<style>
+  :root {
+    --m-text: #1f1f1f; --m-muted: #5f6368; --m-border: #e3e3e3; --m-card: #ffffff; --m-soft: #f6f8fc;
+    --m-blue: #1a73e8; --m-red: #ea4335; --m-green: #188038; --m-green-bg: #e6f4ea; --m-amber: #b06000;
+    --m-amber-bg: #fef7e0; --m-bad: #c5221f; --m-bad-bg: #fce8e6;
+  }
+  :root[data-theme="dark"] {
+    --m-text: #e8eaed; --m-muted: #9aa0a6; --m-border: #3c4043; --m-card: #202124; --m-soft: #28292c;
+    --m-blue: #8ab4f8; --m-green: #81c995; --m-green-bg: #1e3a2a; --m-amber: #fdd663; --m-amber-bg: #3d3420;
+    --m-bad: #f28b82; --m-bad-bg: #3c2120;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: transparent; }
+  body {
+    font-family: var(--font-sans, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif);
+    font-size: var(--font-text-sm-size, 14px); line-height: 1.4; color: var(--color-text-primary, var(--m-text));
+  }
+  main { padding: 4px 2px 8px; }
+  header { margin: 0 2px 10px; }
+  h1 { margin: 0; font-size: var(--font-heading-sm-size, 16px); font-weight: var(--font-weight-semibold, 600); }
+  .sub { color: var(--color-text-secondary, var(--m-muted)); font-size: 13px; margin-top: 2px; }
+  .note { margin-top: 6px; font-size: 13px; }
+  .box {
+    background: var(--color-background-primary, var(--m-card));
+    border: 1px solid var(--color-border-tertiary, var(--m-border)); border-radius: var(--border-radius-lg, 12px);
+    overflow: hidden;
+  }
+  /* map */
+  .map { position: relative; height: 300px; overflow: hidden; background: #e5e3df; touch-action: none;
+         cursor: grab; user-select: none; }
+  .map.places { height: 240px; }
+  .map.dragging { cursor: grabbing; }
+  .tiles, .overlay, .pins { position: absolute; inset: 0; }
+  .tiles img { position: absolute; width: 256px; height: 256px; pointer-events: none; }
+  .overlay { pointer-events: none; }
+  .pin { position: absolute; width: 24px; height: 24px; margin: -12px 0 0 -12px; border-radius: 50%;
+         background: var(--m-red); color: #fff; border: 2px solid #fff; font: 600 12px/20px system-ui, sans-serif;
+         text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,.4); cursor: pointer; }
+  .pin.origin { background: var(--m-green); }
+  .pin.hl { transform: scale(1.25); z-index: 2; }
+  .ctl { position: absolute; right: 8px; top: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .ctl button, .seg button {
+    border: 0; background: #fff; color: #3c4043; box-shadow: 0 1px 3px rgba(0,0,0,.3); cursor: pointer;
+    font: 600 15px/1 system-ui, sans-serif;
+  }
+  .ctl button { width: 30px; height: 30px; border-radius: 6px; }
+  .seg { position: absolute; left: 8px; top: 8px; display: flex; border-radius: 6px; overflow: hidden;
+         box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+  .seg button { box-shadow: none; padding: 6px 10px; font-size: 12px; font-weight: 500; }
+  .seg button.on { background: #e8f0fe; color: #1967d2; }
+  .credit { position: absolute; right: 0; bottom: 0; padding: 1px 6px; font-size: 10px; color: #444;
+            background: rgba(255,255,255,.75); pointer-events: none; }
+  /* summary bar */
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 10px 12px;
+         border-top: 1px solid var(--color-border-tertiary, var(--m-border)); }
+  .big { font-size: 18px; font-weight: 600; }
+  .muted { color: var(--color-text-secondary, var(--m-muted)); }
+  .grow { flex: 1; }
+  a.btn { display: inline-block; padding: 6px 12px; border-radius: 999px; background: var(--m-blue); color: #fff;
+          text-decoration: none; font-weight: 600; font-size: 13px; }
+  :root[data-theme="dark"] a.btn { color: #202124; }
+  .warn { margin: 0 12px 10px; padding: 8px 10px; border-radius: 8px; background: var(--m-amber-bg);
+          color: var(--m-amber); font-size: 13px; }
+  /* timeline */
+  ol.tl { list-style: none; margin: 0; padding: 4px 12px 10px; }
+  .stop { display: grid; grid-template-columns: 28px 1fr; gap: 0 10px; padding: 8px 0 2px; }
+  .dot { width: 24px; height: 24px; border-radius: 50%; background: var(--m-red); color: #fff; text-align: center;
+         font: 600 12px/24px system-ui, sans-serif; margin-top: 1px; }
+  .dot.origin { background: var(--m-green); }
+  .name { font-weight: 600; }
+  a.name { color: inherit; text-decoration: none; }
+  a.name:hover { text-decoration: underline; }
+  .addr, .when { font-size: 12.5px; color: var(--color-text-secondary, var(--m-muted)); }
+  .chip { display: inline-block; margin: 3px 4px 0 0; padding: 1px 8px; border-radius: 999px; font-size: 12px; }
+  .chip.open { background: var(--m-green-bg); color: var(--m-green); }
+  .chip.closes_during_visit { background: var(--m-amber-bg); color: var(--m-amber); }
+  .chip.closed { background: var(--m-bad-bg); color: var(--m-bad); }
+  .chip.unknown { background: var(--m-soft); color: var(--m-muted); }
+  .leg { display: grid; grid-template-columns: 28px 1fr; gap: 0 10px; }
+  .rail { width: 24px; display: flex; justify-content: center; }
+  .rail::before { content: ""; width: 0; border-left: 3px dotted var(--m-blue); min-height: 30px; }
+  .legbody { padding: 4px 0; font-size: 13px; }
+  details summary { cursor: pointer; color: var(--m-blue); font-size: 12.5px; margin-top: 2px; }
+  ol.steps { margin: 6px 0 4px; padding: 0; list-style: none; }
+  ol.steps li { display: grid; grid-template-columns: 22px 1fr auto; gap: 6px; padding: 4px 0;
+                border-bottom: 1px solid var(--color-border-tertiary, var(--m-border)); font-size: 12.5px; }
+  ol.steps li:last-child { border-bottom: 0; }
+  .arrow { text-align: center; font-size: 15px; line-height: 1.1; }
+  .dist { color: var(--color-text-secondary, var(--m-muted)); white-space: nowrap; }
+  .toll { display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 4px; font-size: 11px;
+          background: var(--m-amber-bg); color: var(--m-amber); }
+  /* place cards */
+  .grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); margin-top: 10px; }
+  .card { display: flex; flex-direction: column; }
+  .card.hl { outline: 2px solid var(--m-blue); }
+  .photo { position: relative; height: 120px; background: var(--m-soft); }
+  .photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .photo .dot { position: absolute; left: 8px; top: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
+  .body { padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 2px; flex: 1; }
+  .facts { font-size: 12.5px; color: var(--color-text-secondary, var(--m-muted)); }
+  .stars { color: #e7711b; }
+  .links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; font-size: 13px; }
+  .links a { color: var(--m-blue); text-decoration: none; font-weight: 500; }
+  .status { color: var(--color-text-secondary, var(--m-muted)); padding: 8px 2px; }
+  .skel { height: 300px; background: linear-gradient(90deg, var(--m-soft), transparent, var(--m-soft));
+          background-size: 200% 100%; animation: sh 1.2s infinite; }
+  @keyframes sh { to { background-position: -200% 0; } }
+</style>
+</head>
+<body>
+<main id="root"><p class="status">Loading map…</p></main>
+<script>
+(function () {
+  "use strict";
+  const TILE_URL = "https://www.google.com/maps/vt";
+  const PHOTO_HOSTS = ["lh3.googleusercontent.com", "lh4.googleusercontent.com", "lh5.googleusercontent.com",
+                       "lh6.googleusercontent.com"];
+  const root = document.getElementById("root");
+  let hostCaps = {};
+  let locale;
+  let nextId = 1;
+  const pending = new Map();
+
+  // --- MCP Apps over postMessage (JSON-RPC 2.0, parent window only) ---
+  const send = (msg) => window.parent.postMessage(msg, "*");
+  const notify = (method, params) => send({ jsonrpc: "2.0", method, params: params || {} });
+  function request(method, params) {
+    const id = nextId++;
+    send({ jsonrpc: "2.0", id, method, params });
+    return new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject });
+      setTimeout(() => { if (pending.delete(id)) reject(new Error("timeout")); }, 15000);
+    });
+  }
+  window.addEventListener("message", (event) => {
+    if (event.source !== window.parent) return;
+    const m = event.data;
+    if (!m || m.jsonrpc !== "2.0") return;
+    if (m.method === undefined && m.id !== undefined) {
+      const p = pending.get(m.id);
+      if (!p) return;
+      pending.delete(m.id);
+      m.error ? p.reject(m.error) : p.resolve(m.result);
+      return;
+    }
+    if (m.id !== undefined) {
+      const known = m.method === "ui/resource-teardown" || m.method === "ping";
+      send(known ? { jsonrpc: "2.0", id: m.id, result: {} }
+                 : { jsonrpc: "2.0", id: m.id, error: { code: -32601, message: "Method not found" } });
+      return;
+    }
+    if (m.method === "ui/notifications/tool-input") showLoading(m.params && m.params.arguments);
+    else if (m.method === "ui/notifications/tool-result") showResult(m.params || {});
+    else if (m.method === "ui/notifications/tool-cancelled") status("Cancelled.");
+    else if (m.method === "ui/notifications/host-context-changed") applyContext(m.params || {});
+  });
+
+  function applyContext(ctx) {
+    if (ctx.theme === "dark" || ctx.theme === "light") document.documentElement.dataset.theme = ctx.theme;
+    const vars = ctx.styles && ctx.styles.variables;
+    if (vars && typeof vars === "object") {
+      for (const [k, v] of Object.entries(vars)) {
+        if (k.startsWith("--") && typeof v === "string") document.documentElement.style.setProperty(k, v);
+      }
+    }
+    if (typeof ctx.locale === "string") locale = ctx.locale;
+  }
+  if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+    document.documentElement.dataset.theme = "dark";
+  }
+  let lastHeight = 0;
+  const reportSize = () => {
+    const h = Math.ceil(document.documentElement.getBoundingClientRect().height);
+    if (h !== lastHeight) { lastHeight = h; notify("ui/notifications/size-changed", { height: h }); }
+  };
+  if (window.ResizeObserver) new ResizeObserver(reportSize).observe(document.documentElement);
+
+  function openPage(url) {
+    // Through the host, which may ask the person first; a refusal is final. Only a host that
+    // cannot open links at all gets a plain new window.
+    if (!hostCaps.openLinks) return window.open(url, "_blank", "noopener,noreferrer");
+    request("ui/open-link", { url }).catch(() => {});
+  }
+
+  // --- helpers: text only; links are https, http (some places' own sites) or tel, never script ---
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined && text !== null) e.textContent = String(text);
+    return e;
+  }
+  function safeHttps(u) {   // web pages and phone numbers only; opened through the host
+    try {
+      const x = new URL(u);
+      return ["https:", "http:", "tel:"].includes(x.protocol) ? x.href : null;
+    } catch (_) { return null; }
+  }
+  function safePhoto(u) {
+    try {
+      const x = new URL(u);
+      return x.protocol === "https:" && !x.port && PHOTO_HOSTS.includes(x.hostname) ? x.href : null;
+    } catch (_) { return null; }
+  }
+  function link(cls, url, text) {
+    const href = safeHttps(url);
+    if (!href) return el("span", cls, text);
+    const a = el("a", cls, text);
+    a.href = href; a.target = "_blank"; a.rel = "noopener noreferrer";
+    a.addEventListener("click", (e) => { e.preventDefault(); openPage(href); });
+    return a;
+  }
+  const secs = (d) => (typeof d === "string" && /^\d+s$/.test(d) ? parseInt(d, 10) : null);
+  function dur(d) {
+    const s = secs(d);
+    if (s === null) return null;
+    const m = Math.round(s / 60);
+    if (m < 60) return m + " min";
+    return Math.floor(m / 60) + " h " + (m % 60 ? (m % 60) + " min" : "");
+  }
+  function km(m) {
+    if (typeof m !== "number") return null;
+    return m < 1000 ? m + " m" : (m / 1000).toFixed(m < 10000 ? 1 : 0) + " km";
+  }
+  function clock(iso) {
+    if (typeof iso !== "string") return null;
+    const m = /T(\d{2}):(\d{2})/.exec(iso);   // the place's own wall-clock time, as Google gave it
+    return m ? m[1] + ":" + m[2] : null;
+  }
+  const MODE = { DRIVE: "🚗", WALK: "🚶", BICYCLE: "🚲" };
+  function arrow(step) {
+    const m = (step && step.m) || "";
+    const map = { TURN_LEFT: "←", TURN_RIGHT: "→", TURN_SLIGHT_LEFT: "↖", TURN_SLIGHT_RIGHT: "↗",
+                  TURN_SHARP_LEFT: "↙", TURN_SHARP_RIGHT: "↘", UTURN_LEFT: "↶", UTURN_RIGHT: "↷", STRAIGHT: "↑",
+                  MERGE: "⤨", ON_RAMP: "↗", OFF_RAMP: "↘", FORK_LEFT: "↖", FORK_RIGHT: "↗", NAME_CHANGE: "↑" };
+    if (map[m]) return map[m];
+    if (m.startsWith("ROUNDABOUT")) return "⟳";
+    const t = ((step && step.i) || "").toLowerCase();   // display only: a hint from the words
+    if (/\bslight left\b/.test(t)) return "↖";
+    if (/\bslight right\b/.test(t)) return "↗";
+    if (/\bleft\b/.test(t)) return "←";
+    if (/\bright\b/.test(t)) return "→";
+    if (/^head\b/.test(t)) return "•";
+    return "↑";
+  }
+
+  // --- the map: Google tiles, an SVG route and pins; drag, buttons, double-click ---
+  const TILE = 256;
+  function worldPx(lat, lng, z) {
+    const size = TILE * Math.pow(2, z);
+    const s = Math.sin(Math.max(-85.05112878, Math.min(85.05112878, lat)) * Math.PI / 180);
+    return [(lng + 180) / 360 * size, (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * size];
+  }
+  function latLng(x, y, z) {
+    const size = TILE * Math.pow(2, z);
+    const n = Math.PI - 2 * Math.PI * y / size;
+    return [180 / Math.PI * Math.atan(Math.sinh(n)), x / size * 360 - 180];
+  }
+  function makeMap(box, opts) {
+    const tiles = el("div", "tiles"), pins = el("div", "pins");
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "overlay");
+    box.append(tiles, svg, pins);
+    const ctl = el("div", "ctl");
+    const zin = el("button", "", "+"), zout = el("button", "", "−"), fitb = el("button", "", "⤢");
+    zin.title = "Zoom in"; zout.title = "Zoom out"; fitb.title = "Show everything";
+    ctl.append(zin, zout, fitb);
+    const seg = el("div", "seg");
+    const bMap = el("button", "on", "Map"), bSat = el("button", "", "Satellite");
+    seg.append(bMap, bSat);
+    box.append(ctl, seg, el("div", "credit", "Map data © Google"));
+    [zin, zout, fitb, bMap, bSat].forEach((b) => { b.type = "button"; });
+
+    const points = (opts.path || []).filter((p) => Array.isArray(p) && p.length === 2);
+    const marks = (opts.pins || []).filter((p) => typeof p.lat === "number" && typeof p.lng === "number");
+    let layer = "m", z = 13, cx = 0, cy = 0;   // centre in world pixels at zoom z
+    let touched = false;   // once the person pans or zooms, a resize no longer re-fits the view
+    const W = () => box.clientWidth || 600, H = () => box.clientHeight || 300;
+
+    function fit() {
+      const all = points.concat(marks.map((p) => [p.lat, p.lng]));
+      if (!all.length) return;
+      let zoom = all.length === 1 ? 16 : 18;
+      for (; zoom > 1; zoom--) {
+        const xy = all.map((p) => worldPx(p[0], p[1], zoom));
+        const xs = xy.map((p) => p[0]), ys = xy.map((p) => p[1]);
+        if (Math.max(...xs) - Math.min(...xs) <= W() - 60 && Math.max(...ys) - Math.min(...ys) <= H() - 60) break;
+      }
+      const xy = all.map((p) => worldPx(p[0], p[1], zoom));
+      const xs = xy.map((p) => p[0]), ys = xy.map((p) => p[1]);
+      z = zoom; cx = (Math.max(...xs) + Math.min(...xs)) / 2; cy = (Math.max(...ys) + Math.min(...ys)) / 2;
+      draw();
+    }
+    function setZoom(nz, ax, ay) {   // keep the point under (ax, ay) in place
+      nz = Math.max(2, Math.min(20, nz));
+      if (nz === z) return;
+      touched = true;
+      const px = cx - W() / 2 + (ax === undefined ? W() / 2 : ax);
+      const py = cy - H() / 2 + (ay === undefined ? H() / 2 : ay);
+      const k = Math.pow(2, nz - z);
+      cx = px * k - ((ax === undefined ? W() / 2 : ax) - W() / 2);
+      cy = py * k - ((ay === undefined ? H() / 2 : ay) - H() / 2);
+      z = nz; draw();
+    }
+    function draw() {
+      const w = W(), h = H(), left = cx - w / 2, top = cy - h / 2, count = Math.pow(2, z);
+      const frag = document.createDocumentFragment();
+      for (let ty = Math.floor(top / TILE); ty <= Math.floor((top + h - 1) / TILE); ty++) {
+        if (ty < 0 || ty >= count) continue;
+        for (let tx = Math.floor(left / TILE); tx <= Math.floor((left + w - 1) / TILE); tx++) {
+          const img = el("img");
+          img.alt = ""; img.referrerPolicy = "no-referrer"; img.decoding = "async"; img.draggable = false;
+          img.src = TILE_URL + "?lyrs=" + layer + "&hl=en&x=" + (((tx % count) + count) % count) + "&y=" + ty + "&z=" + z;
+          img.style.left = Math.round(tx * TILE - left) + "px";
+          img.style.top = Math.round(ty * TILE - top) + "px";
+          frag.append(img);
+        }
+      }
+      tiles.replaceChildren(frag);
+      svg.setAttribute("width", w); svg.setAttribute("height", h);
+      svg.replaceChildren();
+      if (points.length > 1) {
+        const d = points.map((p, i) => {
+          const xy = worldPx(p[0], p[1], z);
+          return (i ? "L" : "M") + (xy[0] - left).toFixed(1) + " " + (xy[1] - top).toFixed(1);
+        }).join("");
+        for (const [stroke, width] of [["#ffffff", 8], ["#1a73e8", 5]]) {
+          const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          path.setAttribute("d", d); path.setAttribute("fill", "none"); path.setAttribute("stroke", stroke);
+          path.setAttribute("stroke-width", width); path.setAttribute("stroke-linejoin", "round");
+          path.setAttribute("stroke-linecap", "round");
+          svg.append(path);
+        }
+      }
+      pins.replaceChildren(...marks.map((p) => {
+        const xy = worldPx(p.lat, p.lng, z);
+        const pin = el("div", "pin" + (p.origin ? " origin" : ""), p.label || "");
+        pin.style.left = (xy[0] - left) + "px"; pin.style.top = (xy[1] - top) + "px";
+        if (p.title) pin.title = p.title;
+        if (p.key && opts.onPin) pin.addEventListener("click", () => opts.onPin(p.key));
+        p.node = pin;
+        return pin;
+      }));
+    }
+    let drag = null;
+    box.addEventListener("pointerdown", (e) => {
+      if (e.target.closest("button") || e.target.classList.contains("pin")) return;
+      drag = { x: e.clientX, y: e.clientY, cx, cy };
+      touched = true;
+      box.classList.add("dragging"); box.setPointerCapture(e.pointerId);
+    });
+    box.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      cx = drag.cx - (e.clientX - drag.x); cy = drag.cy - (e.clientY - drag.y);
+      draw();
+    });
+    const end = () => { drag = null; box.classList.remove("dragging"); };
+    box.addEventListener("pointerup", end); box.addEventListener("pointercancel", end);
+    box.addEventListener("dblclick", (e) => {
+      const r = box.getBoundingClientRect();
+      setZoom(z + 1, e.clientX - r.left, e.clientY - r.top);
+    });
+    box.addEventListener("wheel", (e) => {   // zoom with ctrl/cmd + wheel; plain wheel scrolls the chat
+      if (!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      const r = box.getBoundingClientRect();
+      setZoom(z + (e.deltaY < 0 ? 1 : -1), e.clientX - r.left, e.clientY - r.top);
+    }, { passive: false });
+    zin.addEventListener("click", () => setZoom(z + 1));
+    zout.addEventListener("click", () => setZoom(z - 1));
+    fitb.addEventListener("click", () => { touched = false; fit(); });
+    bMap.addEventListener("click", () => { layer = "m"; bMap.className = "on"; bSat.className = ""; draw(); });
+    bSat.addEventListener("click", () => { layer = "y"; bSat.className = "on"; bMap.className = ""; draw(); });
+    if (window.ResizeObserver) {
+      let w0 = 0;
+      new ResizeObserver(() => {
+        if (box.clientWidth === w0) return;
+        w0 = box.clientWidth;
+        touched ? draw() : fit();
+      }).observe(box);
+    }
+    fit();
+    return { highlight(key) { marks.forEach((p) => p.node && p.node.classList.toggle("hl", p.key === key)); } };
+  }
+
+  // --- route view ---
+  function chip(s) {
+    if (!s || !s.state) return null;
+    const label = s.text || (s.state === "unknown" ? "Hours unknown" : s.state);
+    return el("span", "chip " + s.state, label);
+  }
+  function showRoute(d, meta) {
+    const parts = [];
+    const h = el("header");
+    const stops = Array.isArray(d.stops) ? d.stops : [];
+    const first = stops[0], last = stops[stops.length - 1];
+    const name = (s) => (s && (s.displayName || s.query)) || "?";
+    h.append(el("h1", "", d.title || (name(first) + " → " + name(last))));
+    const sub = [];
+    if (stops.length > 2) sub.push((stops.length - 2) + (stops.length === 3 ? " stop" : " stops"));
+    if (d.optimized && d.savedVsGivenOrder && secs(d.savedVsGivenOrder) > 30) {
+      sub.push("best order saves " + dur(d.savedVsGivenOrder));
+    } else if (d.optimized) sub.push("best of " + d.ordersCompared + " orders");
+    if (d.description && stops.length <= 2) sub.push("via " + d.description);
+    if (sub.length) h.append(el("div", "sub", sub.join(" · ")));
+    if (d.note) h.append(el("div", "note", d.note));
+    parts.push(h);
+
+    const box = el("div", "box");
+    const mapBox = el("div", "map");
+    box.append(mapBox);
+    const bar = el("div", "bar");
+    const big = el("span", "big", (MODE[d.travelMode] || "") + " " + (dur(d.duration) || "—"));
+    bar.append(big);
+    const facts = [km(d.distanceMeters)];
+    if (d.durationWithDwell && d.durationWithDwell !== d.duration) facts.push(dur(d.durationWithDwell) + " with stops");
+    if (clock(d.departureTime) && clock(d.arrivalTime)) facts.push(clock(d.departureTime) + " → " + clock(d.arrivalTime));
+    bar.append(el("span", "muted", facts.filter(Boolean).join(" · ")));
+    bar.append(el("span", "grow"));
+    if (d.googleMapsUri) bar.append(link("btn", d.googleMapsUri, "Open in Google Maps"));
+    box.append(bar);
+    for (const w of d.warnings || []) box.append(el("div", "warn", "⚠ " + w));
+
+    const tl = el("ol", "tl");
+    const legs = Array.isArray(d.legs) ? d.legs : [];
+    const steps = (meta && Array.isArray(meta.steps)) ? meta.steps : [];
+    stops.forEach((s, i) => {
+      const li = el("li", "stop");
+      li.append(el("div", "dot" + (s.role === "origin" ? " origin" : ""), s.label || ""));
+      const b = el("div");
+      b.append(el("div", "name", name(s)));
+      const sub2 = [s.category, typeof s.rating === "number" ? "★ " + s.rating.toFixed(1) : null].filter(Boolean);
+      if (s.formattedAddress) sub2.push(s.formattedAddress);
+      if (sub2.length) b.append(el("div", "addr", sub2.join(" · ")));
+      const when = [];
+      if (i === 0 && clock(s.departureTime)) when.push("Leave " + clock(s.departureTime));
+      if (i > 0 && clock(s.arrivalTime)) when.push("Arrive " + clock(s.arrivalTime));
+      if (s.dwellMinutes) when.push("stay " + s.dwellMinutes + " min");
+      if (when.length) b.append(el("div", "when", when.join(" · ")));
+      const c = chip(s.openingStatus);
+      if (c) b.append(c);
+      if (s.openingStatus && s.openingStatus.hours) b.append(el("span", "chip unknown", "Hours: " + s.openingStatus.hours));
+      li.append(b);
+      tl.append(li);
+      const leg = legs[i];
+      if (leg && i < stops.length - 1) {
+        const row = el("li", "leg");
+        row.append(el("div", "rail"));
+        const lb = el("div", "legbody");
+        lb.append(el("span", "muted", [MODE[d.travelMode], dur(leg.duration), km(leg.distanceMeters)].filter(Boolean).join(" ")));
+        const legSteps = Array.isArray(steps[i]) ? steps[i] : [];
+        if (legSteps.length) {
+          const det = el("details");
+          det.append(el("summary", "", legSteps.length + " steps"));
+          const ol = el("ol", "steps");
+          for (const st of legSteps) {
+            const r = el("li");
+            r.append(el("span", "arrow", arrow(st)));
+            const t = el("span", "", st.i || "");
+            if (Array.isArray(st.n) && st.n.length) t.append(el("span", "toll", st.n.join(", ")));
+            r.append(t, el("span", "dist", st.d || ""));
+            ol.append(r);
+          }
+          det.append(ol);
+          lb.append(det);
+        }
+        row.append(lb);
+        tl.append(row);
+      }
+    });
+    box.append(tl);
+    parts.push(box);
+    root.replaceChildren(...parts);
+    const pins = stops.filter((s) => s.location).map((s) => ({
+      lat: s.location.latitude, lng: s.location.longitude, label: s.label, title: name(s), origin: s.role === "origin",
+    }));
+    makeMap(mapBox, { path: (meta && meta.path) || [], pins });
+  }
+
+  // --- places view ---
+  function showPlaces(d, meta) {
+    const parts = [];
+    const h = el("header");
+    h.append(el("h1", "", d.title || "Places"));
+    h.append(el("div", "sub", d.places.length + (d.places.length === 1 ? " place" : " places") + " · Google Maps"));
+    parts.push(h);
+    const located = d.places.filter((p) => p && p.location);
+    let map = null;
+    const cards = new Map();
+    if (located.length) {
+      const box = el("div", "box"), mapBox = el("div", "map places");
+      box.append(mapBox);
+      parts.push(box);
+      setTimeout(() => {
+        map = makeMap(mapBox, {
+          pins: located.map((p) => ({ lat: p.location.latitude, lng: p.location.longitude, label: p.label,
+                                     title: p.displayName, key: p.id })),
+          onPin: (key) => { const c = cards.get(key); if (c) { c.scrollIntoView({ behavior: "smooth", block: "nearest" }); flash(key); } },
+        });
+      }, 0);
+    }
+    function flash(key) {
+      cards.forEach((c, k) => c.classList.toggle("hl", k === key));
+      if (map) map.highlight(key);
+    }
+    const grid = el("div", "grid");
+    const photos = (meta && meta.photos) || {};
+    for (const p of d.places) {
+      if (!p || typeof p !== "object") continue;
+      const c = el("article", "box card");
+      const ph = el("div", "photo");
+      const src = safePhoto(photos[p.id]);
+      if (src) {
+        const img = el("img"); img.alt = p.displayName || ""; img.referrerPolicy = "no-referrer"; img.src = src;
+        img.addEventListener("error", () => img.remove());
+        ph.append(img);
+      }
+      if (p.label) ph.append(el("div", "dot", p.label));
+      c.append(ph);
+      const b = el("div", "body");
+      b.append(p.googleMapsUri ? link("name", p.googleMapsUri, p.displayName || "?") : el("div", "name", p.displayName || "?"));
+      const f1 = [];
+      if (typeof p.rating === "number") {
+        const r = el("span");
+        r.append(el("span", "stars", "★ "), document.createTextNode(p.rating.toFixed(1) + (p.userRatingCount ? " (" + p.userRatingCount.toLocaleString(locale) + ")" : "")));
+        f1.push(r);
+      }
+      if (p.category) f1.push(document.createTextNode(p.category));
+      if (p.priceRangeText) f1.push(document.createTextNode(p.priceRangeText));
+      if (f1.length) {
+        const f = el("div", "facts");
+        f1.forEach((x, i) => { if (i) f.append(document.createTextNode(" · ")); f.append(x); });
+        b.append(f);
+      }
+      if (p.openNow === true || p.openNow === false || p.hoursStatusText) {
+        const state = p.openNow === true ? "open" : p.openNow === false ? "closed" : "unknown";
+        b.append(chip({ state, text: p.hoursStatusText || (p.openNow ? "Open now" : "Closed now") }));
+      }
+      if (p.todayHours) b.append(el("div", "facts", "Today: " + p.todayHours));
+      for (const hd of p.holidays || []) {
+        b.append(el("div", "facts", "⚑ " + hd.date + " " + (hd.name || "Holiday") + (hd.confirmed ? ": " : " (may change): ") + (hd.hours || []).join(", ")));
+      }
+      if (p.formattedAddress) b.append(el("div", "facts", p.formattedAddress));
+      if (p.note) b.append(el("div", "note", p.note));
+      const links = el("div", "links");
+      if (p.googleMapsUri) links.append(link("", p.googleMapsUri, "Map ↗"));
+      if (p.directionsUri) links.append(link("", p.directionsUri, "Directions ↗"));
+      if (p.websiteUri) links.append(link("", p.websiteUri, "Website ↗"));
+      if (p.phone) links.append(link("", "tel:" + p.phone.replace(/[^+\d]/g, ""), p.phone));
+      b.append(el("div", "grow"), links);
+      c.append(b);
+      c.addEventListener("mouseenter", () => flash(p.id));
+      cards.set(p.id, c);
+      grid.append(c);
+    }
+    parts.push(grid);
+    root.replaceChildren(...parts);
+  }
+
+  function status(text) { root.replaceChildren(el("p", "status", text)); }
+  function showLoading(args) {
+    const parts = [];
+    if (args && typeof args.title === "string" && args.title) {
+      const h = el("header"); h.append(el("h1", "", args.title)); parts.push(h);
+    }
+    parts.push(el("div", "box skel"));
+    root.replaceChildren(...parts);
+  }
+  function data(result) {
+    if (result.structuredContent && typeof result.structuredContent === "object") return result.structuredContent;
+    for (const c of result.content || []) {
+      if (c && c.type === "text") { try { return JSON.parse(c.text); } catch (_) { /* not JSON */ } }
+    }
+    return null;
+  }
+  function showResult(result) {
+    const d = data(result);
+    const meta = (result._meta && result._meta["maps/view"]) || {};
+    if (result.isError || !d || d.error) {
+      const err = d && d.error;
+      status(err && err.next_step ? "Google Maps: " + err.next_step : "This could not be shown.");
+      return;
+    }
+    if (d.kind === "route") showRoute(d, meta);
+    else if (d.kind === "places" && Array.isArray(d.places)) showPlaces(d, meta);
+    else status("This could not be shown.");
+  }
+
+  request("ui/initialize", {
+    appInfo: { name: "maps-view", version: "__VERSION__" },
+    appCapabilities: { availableDisplayModes: ["inline"] },
+    protocolVersion: "2026-01-26",
+  }).then((r) => {
+    hostCaps = (r && r.hostCapabilities) || {};
+    applyContext((r && r.hostContext) || {});
+    notify("ui/notifications/initialized");
+  }, () => { /* no MCP Apps host answered: results that still arrive are shown */ });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+"""Record the Google Maps responses in tests/fixtures (signed out, no key, no account).
+
+    .venv/bin/python scripts/capture-fixtures [--only NAME ...]   # record live, then prune
+    .venv/bin/python scripts/capture-fixtures --prune-existing    # re-prune the files in place
+
+Requests go to www.google.com through the vendored library (about 25, paced). The places are
+public landmarks and shops in Vienna (and Busan for the Korea case). Before a response is
+written:
+
+1. It is pruned to what the parsers read: the parser runs over the response with every list
+   wrapped to record which positions it reads, and every value it never reads becomes null
+   (list lengths stay, so positions do not move). That drops reviews and reviewers, photos,
+   ads, posts, tracking and session tokens, and whatever else the tests do not need, and the
+   parsed result is checked to be unchanged.
+2. What remains is scrubbed: photo URLs, tokens, non-Google URLs and prices.
+3. It is checked against FORBIDDEN (ads, contributor links, tracking parameters, request
+   tokens, prices in a requester's currency); any hit stops the run.
+
+Files are JSON with one value per line, so a reviewer (or a secret scanner) reads each value
+on its own line. Review the diff, then update the tests' expectations.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import datetime as dt
+import json
+import re
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from maps_mcp.vendor.gmaps import GMapsClient  # noqa: E402
+from maps_mcp.vendor.gmaps.rpc.directions import parse_directions_response  # noqa: E402
+from maps_mcp.vendor.gmaps.rpc.parser import (  # noqa: E402
+    _search_place_data_entries,
+    parse_opening_hours,
+    parse_place_details_response,
+    parse_search_response,
+)
+
+OUT = ROOT / "tests" / "fixtures"
+GOOGLE_HOST = re.compile(
+    r"^https?://([a-z0-9-]+\.)*(google\.com|googleusercontent\.com|ggpht\.com|gstatic\.com|googleapis\.com)(/|$)"
+)
+PHOTO_HOST = re.compile(r"^https?://[^/]*(googleusercontent\.com|ggpht\.com|streetviewpixels)")
+URL = re.compile(r"https?://[^\s\"'<>]+")
+TOKEN = re.compile(r"^[A-Za-z0-9_+/=-]{16,}$")
+KEEP = re.compile(r"^(ChIJ[A-Za-z0-9_-]{23}|0x[0-9a-f]+:0x[0-9a-f]+|SearchResult\.TYPE_[A-Z_]+)$")
+PRICE = re.compile(r"(?:[A-Z]{1,3}\$|[$€£¥₩])\s?\d[\d,.]*")
+FORBIDDEN = re.compile(
+    r"aclk|adview|aboutthisad|sxsrf|gclid|maps/contrib|AOvVaw|[02]ahUKE|HK\$|HKD|\+852"
+    r"|[A-Z]{1,3}\$\s?\d",
+    re.IGNORECASE,
+)
+
+
+class Tracked(list):
+    """A list that records every position read from it (and wraps what it hands out)."""
+
+    def __init__(self, data: list, path: tuple, seen: set) -> None:
+        super().__init__(data)
+        self._path, self._seen = path, seen
+
+    def __getitem__(self, index):  # type: ignore[override]
+        if isinstance(index, slice):
+            return [self[i] for i in range(len(self))[index]]
+        i = index if index >= 0 else len(self) + index
+        self._seen.add(self._path + (i,))
+        return track(super().__getitem__(index), self._path + (i,), self._seen)
+
+    def __iter__(self):
+        for i in range(len(self)):
+            yield self[i]
+
+
+def track(value: Any, path: tuple, seen: set) -> Any:
+    return Tracked(value, path, seen) if isinstance(value, list) and not isinstance(value, Tracked) else value
+
+
+def keep_read(value: Any, path: tuple, seen: set) -> Any:
+    """The value with everything the parser never read set to null (list lengths kept)."""
+    if not isinstance(value, list):
+        return value
+    out = []
+    for i, child in enumerate(value):
+        child_path = path + (i,)
+        read = child_path in seen or any(p[: len(child_path)] == child_path for p in seen)
+        out.append(keep_read(child, child_path, seen) if read else None)
+    return out
+
+
+def parsed(kind: str, raw: Any) -> Any:
+    """What the tests rely on, for the before/after check (the parsers' raw back-references
+    are dropped first: serialising them would read, and keep, everything)."""
+    if kind == "route":
+        result = parse_directions_response(raw)
+        result.raw = None
+        return result.to_dict(include_path=True)
+    if kind == "search":
+        places = parse_search_response(raw)
+        for place in places:
+            place.raw = None
+        return [p.to_dict() for p in places]
+    if kind == "details":
+        place = parse_place_details_response(raw)
+        if place is None:
+            return None
+        place.raw = None
+        return place.to_dict()
+    if kind == "hours":
+        return parse_opening_hours(raw)
+    raise ValueError(kind)
+
+
+def prune(kind: str, raw: Any) -> Any:
+    seen: set = set()
+    parsed(kind, track(raw, (), seen))
+    pruned = keep_read(raw, (), seen)
+    if parsed(kind, pruned) != parsed(kind, raw):
+        raise SystemExit(f"pruning changed what the parser reads ({kind}): not writing it")
+    return pruned
+
+
+def scrub(value: Any, tokens: dict[str, str]) -> Any:
+    """Placeholders for what is tied to the request or points elsewhere; the place data stays."""
+    if isinstance(value, list):
+        return [scrub(v, tokens) for v in value]
+    if not isinstance(value, str):
+        return value
+    if PHOTO_HOST.match(value) or "AF1Qip" in value:
+        return "https://lh3.googleusercontent.com/p/example-photo=w408-h272-k-no"
+    if TOKEN.match(value) and not KEEP.match(value) and (len(value) >= 20 or re.search(r"\d", value)):
+        return tokens.setdefault(value, f"token-{len(tokens) + 1:04d}")
+    value = PRICE.sub("€0", value)
+
+    def url(match: re.Match[str]) -> str:
+        text = match.group(0)
+        if PHOTO_HOST.match(text):
+            return "https://lh3.googleusercontent.com/p/example-photo"
+        if GOOGLE_HOST.match(text):
+            return re.sub(r"([?&](ei|ved|sa|usg|opi|sca_esv|authuser|uule|lei)=)[^&]*", r"\1x", text)
+        return "https://www.example.com/"
+
+    return URL.sub(url, value)
+
+
+def write(name: str, data: Any, kind: str) -> None:
+    if kind == "hours":
+        data = {k: {**v, "hours_203": prune("hours", v["hours_203"])} for k, v in data.items()}
+    else:
+        data = prune(kind, data)
+    tokens: dict[str, str] = {}
+    clean = scrub(data, tokens)
+    hits = sorted({m.group(0) for m in FORBIDDEN.finditer(json.dumps(clean, ensure_ascii=False))})
+    if hits:
+        raise SystemExit(f"{name}: still holds {hits}: extend scrub() or prune()")
+    # One value per line: diffs and the publication scanner see each value on its own.
+    (OUT / f"{name}.json").write_text(json.dumps(clean, ensure_ascii=False, indent=0) + "\n", encoding="utf-8")
+    size = (OUT / f"{name}.json").stat().st_size
+    print(f"{name}: {size // 1024} KB, {len(tokens)} tokens replaced")
+
+
+def next_weekday(day: int, hour: int, minute: int = 0) -> dt.datetime:
+    """The next given weekday (0 = Monday) at a local wall-clock time, a week or two out."""
+    today = dt.date.today()
+    date = today + dt.timedelta(days=((day - today.weekday()) % 7) + 7)
+    return dt.datetime(date.year, date.month, date.day, hour, minute)
+
+
+ROUTES: dict[str, tuple[list[Any], str, dict[str, Any]]] = {
+    "walk_text": (["Wien Hauptbahnhof", "Upper Belvedere, Vienna"], "walk", {}),
+    "walk_coords": ([(48.2082, 16.3738), (48.2035, 16.3699)], "walk", {}),
+    "drive_3_stop": (
+        ["Schönbrunn Palace, Vienna", "Naschmarkt, Vienna", "Wiener Riesenrad, Prater, Vienna"],
+        "drive",
+        {},
+    ),
+    "drive_depart": (
+        ["Vienna International Airport", "Stephansplatz, Vienna"],
+        "drive",
+        {"departure_time": next_weekday(3, 8, 30)},
+    ),
+    "drive_arrive": (
+        ["Vienna International Airport", "Stephansplatz, Vienna"],
+        "drive",
+        {"arrival_time": next_weekday(3, 9, 0)},
+    ),
+    "unknown": (["Qwxzv Plaza Nowhere 99999", "Albertina, Vienna"], "walk", {}),
+    "noroute_drive": (["Vienna, Austria", "New York, USA"], "drive", {}),
+    "korea_walk": (["Haeundae Beach, Busan", "Gwangalli Beach, Busan"], "walk", {}),
+}
+SEARCHES = {
+    "search_museums": ("museum", 48.2049, 16.3684),
+    "search_single": ("Café Sperl Gumpendorfer Straße", 48.1997, 16.3611),
+}
+HOURS = [
+    ("SPAR Burggasse Wien", 48.2046, 16.3518),  # supermarket: closed on Austrian National Day
+    ("BILLA Mariahilfer Straße Wien", 48.1966, 16.3460),  # supermarket: notice only
+    ("BP Tankstelle Wien Gürtel", 48.20, 16.34),  # petrol station: open 24 hours
+    ("Café Sperl Wien", 48.1997, 16.3611),
+    ("Loos American Bar Wien", 48.2073, 16.3712),  # closes after midnight
+    ("Steirereck Wien", 48.2049, 16.3816),  # lunch and dinner sittings
+]
+
+
+KINDS = {
+    **{name: "route" for name in ROUTES},
+    **{name: "search" for name in SEARCHES},
+    "details_albertina": "details",
+    "details_cafe": "details",
+    "hours_samples": "hours",
+}
+
+
+def prune_existing() -> None:
+    for name, kind in KINDS.items():
+        path = OUT / f"{name}.json"
+        if path.exists():
+            write(name, json.loads(path.read_text(encoding="utf-8")), kind)
+
+
+async def main(only: set[str]) -> None:
+    OUT.mkdir(parents=True, exist_ok=True)
+    cookies = Path(tempfile.mkdtemp(prefix="capture-fixtures-")) / "cookies.json"
+    async with GMapsClient(validate=False, min_delay=1.2, cookie_file=str(cookies)) as client:
+        for name, (stops, mode, kwargs) in ROUTES.items():
+            if not only or name in only:
+                result = await client.directions.route(stops, mode=mode, **kwargs)
+                write(name, result.raw, "route")
+        for name, (query, lat, lng) in SEARCHES.items():
+            if not only or name in only:
+                result = await client.search.places(query, latitude=lat, longitude=lng, max_results=5)
+                write(name, result.raw, "search")
+        if not only or "details" in only:
+            for query, lat, lng in (("Albertina", 48.2049, 16.3684), ("Café Central Wien", 48.2104, 16.3655)):
+                found = (await client.search.places(query, latitude=lat, longitude=lng, max_results=1)).places
+                raw = await client.search.place_details(found[0].place_id, found[0].hex_id, "", "", "")
+                write("details_" + query.split()[0].lower().replace("é", "e"), raw, "details")
+        if not only or "hours" in only:
+            samples = {}
+            for query, lat, lng in HOURS:
+                raw = (await client.search.places(query, latitude=lat, longitude=lng, max_results=1)).raw
+                entries = _search_place_data_entries(raw)
+                if not entries:
+                    print(f"hours: nothing for {query}")
+                    continue
+                place = entries[0][1]
+                samples[str(place[11])] = {"query": query, "timezone": place[30], "hours_203": place[203]}
+            write("hours_samples", samples, "hours")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--only", nargs="*", default=[], help="fixture names to record (default: all)")
+    parser.add_argument("--prune-existing", action="store_true", help="prune and scrub the existing files, offline")
+    args = parser.parse_args()
+    if args.prune_existing:
+        prune_existing()
+    else:
+        asyncio.run(main(set(args.only)))

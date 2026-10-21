@@ -1,0 +1,14 @@
+.git
+.github
+.venv
+.deps
+.artifacts
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/*.pyc
+tests
+scripts
+docs
+google-cookies.json
+.env

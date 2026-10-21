@@ -1,0 +1,22 @@
+maps-mcp
+Copyright (c) 2026 benjamin-di. Licensed under the MIT licence (LICENSE).
+
+Third-party code (full licence texts in THIRD_PARTY_NOTICES):
+
+- gmaps-scraper, https://github.com/nick-choudhary/gmaps-scraper. MIT License,
+  Copyright (c) 2026 Naveen. Vendored in src/maps_mcp/vendor/gmaps/ (with its LICENSE) from
+  the fork https://github.com/benjamin-di/gmaps-scraper at the commit in
+  src/maps_mcp/vendor/gmaps/VENDORED_COMMIT: upstream plus this project's contributions,
+  each offered upstream as a pull request (single exact-match search results, dated opening
+  hours with holiday flags, place details by place id, directions with steps and route
+  geometry, error classification in the HTTP transport). Only the modules maps-mcp runs are
+  vendored (the list is in scripts/vendor-gmaps.sh); contact and website extraction, the
+  CLI and its MCP server are left out.
+
+Acknowledgement: the request and response layout of Google Maps' directions endpoint was
+first documented by ai-ecoverse/skills (skills/gmaps, https://github.com/ai-ecoverse/skills,
+Apache-2.0, by Lars Trieloff). No code was copied; the facts were re-verified against live
+responses.
+
+Google Maps is a trademark of Google LLC. This project is not affiliated with, endorsed or
+sponsored by Google.
