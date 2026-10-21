@@ -1,6 +1,6 @@
 [project]
 name = "maps-mcp"
-version = "0.5.1"
+version = "0.5.2"
 description = "Read-only MCP server for Google Maps travel times, routes, places and map images, without an API key"
 readme = "README.md"
 license = "MIT"

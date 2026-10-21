@@ -171,6 +171,8 @@ google.com/maps (`tests/fixtures`, recorded and scrubbed by `scripts/capture-fix
 `tests/fixtures/README.md`). `tests/test_safety.py` guards the boundary: the only host is
 www.google.com, and the card view loads only from its declared hosts and connects nowhere.
 
+Contributions: see `CONTRIBUTING.md`; security problems: `SECURITY.md`.
+
 ## Credits
 
 Built on [gmaps-scraper](https://github.com/nick-choudhary/gmaps-scraper) (MIT). The directions
