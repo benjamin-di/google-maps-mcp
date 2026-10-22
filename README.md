@@ -82,7 +82,9 @@ restarts.
 ### stdio (Claude Desktop, Claude Code, Codex)
 
 ```bash
-# from a checkout, with uv (https://docs.astral.sh/uv/)
+# from PyPI, with uv (https://docs.astral.sh/uv/)
+claude mcp add maps -- uvx google-maps-keyless-mcp --transport stdio
+# from a checkout
 claude mcp add maps -- uv --directory /path/to/google-maps-mcp run maps-mcp --transport stdio
 # or with Docker
 claude mcp add maps -- docker run -i --rm --tmpfs /state:uid=1000 ghcr.io/benjamin-di/google-maps-mcp:latest --transport stdio

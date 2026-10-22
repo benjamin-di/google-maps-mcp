@@ -5,7 +5,7 @@ the place's feature ID: ``0x0a 0x12`` (field 1, 18 bytes) followed by two
 fixed64 fields (``0x09`` and ``0x11``), little-endian. Those two numbers are
 the ``0x<hi>:0x<lo>`` feature ID (``hex_id``) that the internal endpoints take.
 Verified against live search results 2026-10-21, e.g.
-``ChIJzbDWTWIABDQRhRm8m1oEQbc`` <-> ``0x340400624dd6b0cd:0xb741045a9bbc1985``.
+``ChIJwVp-8psHbUcRuN43n5iK72Y`` <-> ``0x476d079bf27e5ac1:0x66ef8a989f37deb8``.
 Other place-ID shapes (addresses, ``GhIJ…`` areas) are not feature IDs and
 convert to ``None``.
 """

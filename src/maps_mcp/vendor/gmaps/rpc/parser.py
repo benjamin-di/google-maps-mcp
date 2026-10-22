@@ -372,7 +372,7 @@ def _search_place_data_entries(raw_data: list[Any]) -> list[tuple[list[Any], lis
             place_data = entry[SEARCH_ENTRY_PLACE_DATA_INDEX]
             # data[0][1][0] is normally the metadata entry, but when a query
             # names one place exactly Google answers with that single place in
-            # this slot (live capture 2026-10-21, "Lung King Heen"). Keep it
+            # this slot (live capture 2026-10-21, "Café Sperl"). Keep it
             # only when it carries a business name.
             if index < SEARCH_FIRST_BUSINESS_INDEX and not (
                 len(place_data) > F_NAME and isinstance(place_data[F_NAME], str)
