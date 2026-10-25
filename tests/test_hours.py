@@ -13,14 +13,14 @@ import datetime as dt
 from conftest import load
 
 from maps_mcp import shapes
-from maps_mcp.vendor.gmaps.rpc.parser import ParsedPlace, parse_opening_hours
+from maps_mcp.vendor.gmaps.rpc.parser import ParsedPlace, _parse_opening_hours
 
 SAMPLES = load("hours_samples.json")
 
 
 def _place(name: str) -> ParsedPlace:
     sample = SAMPLES[name]
-    return ParsedPlace(name=name, timezone=sample["timezone"], opening_hours=parse_opening_hours(sample["hours_203"]))
+    return ParsedPlace(name=name, timezone=sample["timezone"], opening_hours=_parse_opening_hours(sample["hours_203"]))
 
 
 def _at(name: str, iso: str) -> dict:

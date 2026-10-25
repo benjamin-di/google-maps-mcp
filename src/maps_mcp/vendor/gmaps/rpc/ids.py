@@ -17,17 +17,17 @@ import binascii
 import re
 import struct
 
-_HEX_ID = re.compile(r"^0x([0-9a-f]{1,16}):0x([0-9a-f]{1,16})$")
-# Exactly the 27 characters of a feature place id: base64 decoding alone would skip stray
-# characters (and stop at "="), letting "ChIJ…&x=1" through.
-_PLACE_ID = re.compile(r"^ChIJ[A-Za-z0-9_-]{23}$")
+_HEX_ID = re.compile(r"0x([0-9a-f]{1,16}):0x([0-9a-f]{1,16})")
+# Exactly the 27 characters of a feature place ID: base64 decoding alone would skip stray
+# characters (and stop at "="), so a malformed ID could decode.
+_PLACE_ID = re.compile(r"ChIJ[A-Za-z0-9_-]{23}")
 _PREFIX = b"\x0a\x12\x09"
 _SECOND = 0x11
 
 
 def place_id_to_hex_id(place_id: str) -> str | None:
     """Return the ``0x…:0x…`` feature ID inside a ``ChIJ…`` place ID, or None."""
-    if not isinstance(place_id, str) or not _PLACE_ID.match(place_id):
+    if not isinstance(place_id, str) or not _PLACE_ID.fullmatch(place_id):
         return None
     try:
         raw = base64.urlsafe_b64decode(place_id + "=" * (-len(place_id) % 4))

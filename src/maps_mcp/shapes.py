@@ -218,7 +218,7 @@ def place(place: ParsedPlace, now: dt.datetime, language: str = "en") -> dict[st
         "priceRangeText": place.price_range or None,
         "timeZone": {"id": place.timezone} if place.timezone else None,
         "currentOpeningHours": opening_hours(place, now),
-        "hoursStatusText": place.hours_status or None,
+        "hoursStatusText": place.status or None,
     }
 
 

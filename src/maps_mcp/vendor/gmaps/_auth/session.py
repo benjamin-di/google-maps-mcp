@@ -20,7 +20,8 @@ from typing import Any
 
 import httpx
 
-from .._hosts import refuse_other_hosts
+from .._hooks import RequestHook, _request_hooks
+from ..exceptions import RequestHookError
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +55,11 @@ class CookieSession:
         self,
         cookie_file: str | None = None,
         timeout: float = 30.0,
+        request_hook: RequestHook | None = None,
     ):
         self._cookie_file = cookie_file
         self._timeout = timeout
+        self._request_hook = request_hook
         self._cookies: dict[str, str] = {}
         self._client: httpx.AsyncClient | None = None
 
@@ -72,7 +75,11 @@ class CookieSession:
 
     async def __aenter__(self) -> CookieSession:
         await self._init_client()
-        await self.ensure_session()
+        try:
+            await self.ensure_session()
+        except BaseException:
+            await self.__aexit__(None, None, None)
+            raise
         return self
 
     async def __aexit__(self, *args: Any) -> None:
@@ -88,7 +95,7 @@ class CookieSession:
                 timeout=httpx.Timeout(self._timeout),
                 follow_redirects=True,
                 http2=False,
-                event_hooks={"request": [refuse_other_hosts]},
+                event_hooks={"request": _request_hooks(self._request_hook)},
             )
 
     async def ensure_session(self) -> None:
@@ -134,6 +141,8 @@ class CookieSession:
             await self._client.get("https://www.google.com/")
             self._extract_cookies()
             logger.debug("Step 1 complete: %d cookies", len(self._cookies))
+        except RequestHookError:
+            raise
         except Exception as e:
             logger.warning("Step 1 failed: %s", e)
 
@@ -163,6 +172,8 @@ class CookieSession:
             )
             self._extract_cookies()
             logger.debug("Step 2 complete")
+        except RequestHookError:
+            raise
         except Exception as e:
             logger.warning("Step 2 failed: %s", e)
 
@@ -174,6 +185,8 @@ class CookieSession:
             await self._client.get("https://www.google.com/maps")
             self._extract_cookies()
             logger.debug("Step 3 complete: %d cookies", len(self._cookies))
+        except RequestHookError:
+            raise
         except Exception as e:
             logger.warning("Step 3 failed: %s", e)
 
@@ -222,16 +235,16 @@ class CookieSession:
 
         directory = os.path.dirname(self._cookie_file) or "."
         os.makedirs(directory, exist_ok=True)
-        # Written privately (mkstemp creates the file 0600) and swapped in atomically, so a
-        # reader never sees half a file and a planted symlink is replaced, not followed.
-        fd, tmp = tempfile.mkstemp(prefix=".cookies-", suffix=".tmp", dir=directory)
+        # mkstemp is private (0600), and replace avoids following an existing
+        # symlink or exposing a partial JSON file to another reader.
+        fd, temporary = tempfile.mkstemp(prefix=".cookies-", suffix=".tmp", dir=directory)
         try:
             with os.fdopen(fd, "w") as f:
                 json.dump({"cookies": self._cookies, "saved_at": time.time()}, f, indent=2)
-            os.replace(tmp, self._cookie_file)
+            os.replace(temporary, self._cookie_file)
         except BaseException:
-            if os.path.exists(tmp):
-                os.unlink(tmp)
+            if os.path.exists(temporary):
+                os.unlink(temporary)
             raise
         logger.debug("Cookies saved to %s", self._cookie_file)
 
@@ -245,16 +258,16 @@ class CookieSession:
         if not os.path.exists(self._cookie_file):
             return
         try:
-            with open(self._cookie_file) as f:
+            with open(self._cookie_file, encoding="utf-8") as f:
                 data = json.load(f)
-        except (OSError, json.JSONDecodeError) as e:
+        except (OSError, UnicodeError, json.JSONDecodeError) as e:
             logger.warning("Failed to load cookies: %s", type(e).__name__)
             return
         if not isinstance(data, dict) or not isinstance(data.get("cookies"), dict):
             logger.warning("Ignoring a cookie file without a cookies object")
             return
-        # Only the consent cookies this session fetches itself: anything else in the file
-        # (an account's sign-in cookies, say) is never sent to Google.
+        # Login cookies have their own explicit GMapsClient input; a saved
+        # consent cache must not enable an account session.
         saved_cookies = {
             name: value
             for name, value in data["cookies"].items()
@@ -262,7 +275,7 @@ class CookieSession:
         }
         saved_at = data.get("saved_at")
         saved_at = saved_at if isinstance(saved_at, (int, float)) else 0
-        # Cookies expire after ~6 hours, refresh if older
+        # Cookies expire after ~6 hours, refresh if older.
         if time.time() - saved_at < 6 * 3600:
             self._cookies.update(saved_cookies)
             logger.debug(

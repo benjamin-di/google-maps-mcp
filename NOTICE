@@ -9,7 +9,8 @@ Third-party code (full licence texts in THIRD_PARTY_NOTICES):
   src/maps_mcp/vendor/gmaps/VENDORED_COMMIT: upstream plus this project's contributions,
   each offered upstream as a pull request (single exact-match search results, dated opening
   hours with holiday flags, place details by place id, directions with steps and route
-  geometry, error classification in the HTTP transport). Only the modules maps-mcp runs are
+  geometry, error classification in the HTTP transport, optional request hooks for Maps and
+  consent traffic, private atomic consent-cache persistence). Only the modules maps-mcp runs are
   vendored (the list is in scripts/vendor-gmaps.sh); contact and website extraction, the
   CLI and its MCP server are left out.
 

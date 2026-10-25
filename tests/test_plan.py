@@ -10,7 +10,7 @@ from conftest import load
 from maps_mcp import planner
 from maps_mcp.errors import MapsError
 from maps_mcp.vendor.gmaps.rpc.directions import Directions, DirectionsWaypoint, Route, RouteLeg
-from maps_mcp.vendor.gmaps.rpc.parser import ParsedPlace, parse_opening_hours
+from maps_mcp.vendor.gmaps.rpc.parser import ParsedPlace, _parse_opening_hours
 
 # Origin HOME and stops in a line going east; the given order is deliberately the worst.
 HOME = (48.20, 16.30)
@@ -117,7 +117,7 @@ async def test_round_trip_ends_at_the_origin_as_pin_a(service, fake):
 
 async def test_arrival_times_dwell_and_opening_hours(service, fake, monkeypatch):
     sample = load("hours_samples.json")["SPAR Gourmet"]
-    spar = ParsedPlace(name="SPAR", timezone="Europe/Vienna", opening_hours=parse_opening_hours(sample["hours_203"]))
+    spar = ParsedPlace(name="SPAR", timezone="Europe/Vienna", opening_hours=_parse_opening_hours(sample["hours_203"]))
 
     async def record(place_id):
         return spar

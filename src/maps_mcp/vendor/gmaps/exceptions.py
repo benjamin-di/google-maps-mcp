@@ -41,10 +41,6 @@ class ParseError(GMapsError):
         self.raw_response = raw_response
 
 
-class HostNotAllowedError(GMapsError):
-    """A request (or a redirect) to a host other than Google's was refused."""
-
-
 class NetworkError(GMapsError):
     """Network/connection errors."""
 
@@ -70,6 +66,14 @@ class ConfigurationError(GMapsError):
     """Configuration-related errors."""
 
     pass
+
+
+class RequestHookError(GMapsError):
+    """A caller request hook failed; the original exception is ``__cause__``.
+
+    The request is not sent, and the error is never retried or ignored by
+    cookie acquisition. This includes hooks that raise an HTTP/network error.
+    """
 
 
 class PlaceNotFoundError(GMapsError):

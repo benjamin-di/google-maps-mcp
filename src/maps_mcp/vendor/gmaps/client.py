@@ -20,6 +20,7 @@ import httpx
 
 from ._auth.session import CookieSession
 from ._directions import DirectionsAPI
+from ._hooks import RequestHook
 from ._places import PlacesAPI
 from ._reviews import ReviewsAPI
 from ._search import SearchAPI
@@ -37,7 +38,7 @@ class GMapsClient:
     Modes:
         Mode 1 (default): GMapsClient() — Phase 1 search only, no login
         Mode 2: GMapsClient(enrich=True) — Phase 1 + Phase 2 details, no login
-        Mode 3: GMapsClient(enrich=True, cookie_file="login_cookies.json") — full
+        Mode 3: GMapsClient(enrich=True, login_cookies="SID=...; HSID=...") — full
 
     Usage:
         async with GMapsClient() as client:
@@ -64,6 +65,7 @@ class GMapsClient:
         extra_headers: dict[str, str] | None = None,
         validate: str | bool = "warn",
         identity: Any = None,
+        request_hook: RequestHook | None = None,
     ):
         """Initialize Google Maps client.
 
@@ -76,10 +78,16 @@ class GMapsClient:
             jitter_pct: Jitter percentage for rate limiting (0.3 = ±30%).
             language: Language code for results.
             proxy: Optional proxy URL.
-            cookie_file: Path to persist scraped cookies.
+            cookie_file: Path to persist anonymous consent cookies; sign-in cookies
+                must use the explicit login_cookies input.
             login_cookies: Raw cookie string from a logged-in Google account
                            (enables Mode 3 — full field enrichment).
             extra_headers: Additional HTTP headers.
+            request_hook: Optional async callback receiving an httpx.Request before
+                each Maps/consent request and redirect hop. A callback failure stops
+                the request without retry, raising RequestHookError with the
+                original exception as its cause. Website/contact fetchers are
+                separate and do not use this hook.
         """
         self.enrich_enabled = enrich
         self.login_cookies = login_cookies
@@ -92,7 +100,9 @@ class GMapsClient:
         self._identity = identity
 
         cookie_path = cookie_file or str(DEFAULT_COOKIE_FILE)
-        self._cookie_session = CookieSession(cookie_file=cookie_path, timeout=timeout)
+        self._cookie_session = CookieSession(
+            cookie_file=cookie_path, timeout=timeout, request_hook=request_hook
+        )
 
         self._transport = HTTPTransport(
             base_url="https://www.google.com",
@@ -103,6 +113,7 @@ class GMapsClient:
             jitter_pct=jitter_pct,
             proxy=proxy,
             extra_headers=extra_headers,
+            request_hook=request_hook,
         )
 
         self._search: SearchAPI | None = None
@@ -260,6 +271,7 @@ class GMapsClient:
                     "description",
                     "popular_times",
                     "status",
+                    "opening_hours",
                 ):
                     val = getattr(enriched, attr)
                     if val:

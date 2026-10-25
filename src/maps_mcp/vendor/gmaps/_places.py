@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from ._search import build_place_preview_path
 from .rpc.ids import hex_id_to_place_id, place_id_to_hex_id
 from .rpc.parser import ParsedPlace, parse_place_details_response
+from .rpc.pb_encoder import build_place_details_path
 
 if TYPE_CHECKING:
     from .transport import HTTPTransport
@@ -63,7 +63,7 @@ class PlacesAPI:
     async def _fetch(self, place_id: str, hex_id: str) -> ParsedPlace | None:
         logger.info("Fetching place: %s (%s)", place_id, hex_id)
         raw = await self._transport.get(
-            path=build_place_preview_path(
+            path=build_place_details_path(
                 place_id=place_id, hex_id=hex_id, language=self._language
             ),
             response_type="json",

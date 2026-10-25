@@ -23,7 +23,7 @@ from .config import Settings
 from .errors import MapsError
 from .state import StateStore
 from .vendor.gmaps import GMapsClient
-from .vendor.gmaps.exceptions import AuthError, HostNotAllowedError, NetworkError, ParseError, RateLimitError
+from .vendor.gmaps.exceptions import AuthError, NetworkError, ParseError, RateLimitError, RequestHookError
 from .vendor.gmaps.exceptions import TimeoutError as GMapsTimeoutError
 from .vendor.gmaps.rpc.directions import Directions
 from .vendor.gmaps.rpc.parser import ParsedPlace
@@ -43,8 +43,18 @@ TILE_USER_AGENT = (
 SLOT_WAIT_S = 30.0
 # The cookie warm-up when no saved consent cookies exist: google.com, two consent pages, /maps.
 WARMUP_REQUESTS = 4
+ALLOWED_GOOGLE_HOSTS = frozenset({"www.google.com", "google.com", "maps.google.com", "consent.google.com"})
 
 ClientFactory = Callable[[Settings], Any]
+
+
+class HostNotAllowedError(Exception):
+    """The fixed Maps destination policy refused a request before I/O."""
+
+
+async def _refuse_other_hosts(request: httpx.Request) -> None:
+    if request.url.host not in ALLOWED_GOOGLE_HOSTS:
+        raise HostNotAllowedError("request to another host refused")
 
 
 def default_client_factory(settings: Settings) -> GMapsClient:
@@ -57,6 +67,7 @@ def default_client_factory(settings: Settings) -> GMapsClient:
         language=settings.language,
         cookie_file=str(settings.cookie_file),
         validate=False,
+        request_hook=_refuse_other_hosts,
     )
 
 
@@ -190,7 +201,9 @@ class GoogleMaps:
                 # Google refusing our request shape (400/404) means the protocol moved.
                 return MapsError("schema_changed", log_detail=f"HTTP {original.response.status_code}")
             return MapsError("upstream_error", log_detail=name)
-        if isinstance(exc, HostNotAllowedError):
+        if isinstance(exc, HostNotAllowedError) or (
+            isinstance(exc, RequestHookError) and isinstance(exc.__cause__, HostNotAllowedError)
+        ):
             return MapsError("upstream_error", log_detail="redirect to another host refused")
         if isinstance(exc, json.JSONDecodeError):
             return MapsError("schema_changed", log_detail=name)

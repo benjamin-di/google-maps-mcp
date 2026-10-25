@@ -18,7 +18,7 @@ cp -R "$work/src/src/gmaps/." "$dest/"
 # lead-generation parts (contact and website extraction, third-party fetchers, geocoding,
 # grid coverage, browser identity capture), the CLI and the stdio MCP server stay out.
 keep="__init__.py client.py _search.py _places.py _directions.py _reviews.py control.py exceptions.py
-grid.py transport.py validation.py _hosts.py _auth rpc"
+grid.py transport.py validation.py _hooks.py _auth rpc"
 for entry in "$dest"/*; do
     name="$(basename "$entry")"
     case " $(echo $keep) " in *" $name "*) ;; *) rm -rf "$entry" ;; esac

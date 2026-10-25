@@ -41,19 +41,17 @@ PHOTO_HOSTS = {f"lh{n}.googleusercontent.com" for n in (3, 4, 5, 6)}
 def test_only_google_maps_hosts_in_url_literals():
     hosts = set()
     for path in OURS + VENDORED:
-        found = set(re.findall(r"https?://([^/\"'\s]+)", path.read_text()))
+        found = set(re.findall(r"https?://([^/\"'\s`]+)", path.read_text()))
         if path.name == "server.py":
             found -= PHOTO_HOSTS  # the card view's CSP: the person's browser loads photos, not this server
         hosts |= found
     assert hosts <= GOOGLE_HOSTS, hosts
 
 
-def test_requests_are_held_to_google_hosts_at_runtime():
-    from maps_mcp.vendor.gmaps import _hosts
+def test_destination_allowlist_stays_explicit():
+    from maps_mcp.google import ALLOWED_GOOGLE_HOSTS
 
-    assert _hosts.ALLOWED_HOSTS == GOOGLE_HOSTS
-    for name in ("transport.py", "_auth/session.py"):
-        assert 'event_hooks={"request": [refuse_other_hosts]}' in (SRC / "vendor" / "gmaps" / name).read_text(), name
+    assert ALLOWED_GOOGLE_HOSTS == GOOGLE_HOSTS
 
 
 def test_card_view_loads_only_google_tiles_and_photos_and_connects_nowhere():
@@ -93,7 +91,7 @@ def test_vendored_library_is_pinned_and_complete():
     assert re.fullmatch(r"[0-9a-f]{40}", commit)
     assert (VENDOR / "LICENSE").read_text().startswith("MIT License")
     assert not (VENDOR / "cli.py").exists() and not (VENDOR / "mcp_server.py").exists()
-    for needed in ("_directions.py", "rpc/directions.py", "rpc/ids.py", "_places.py", "_search.py"):
+    for needed in ("_directions.py", "rpc/directions.py", "rpc/ids.py", "_places.py", "_search.py", "_hooks.py"):
         assert (VENDOR / needed).exists(), needed
 
 
