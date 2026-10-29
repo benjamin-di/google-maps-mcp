@@ -558,6 +558,7 @@
       if (p.googleMapsUri) links.append(link("", p.googleMapsUri, "Map ↗"));
       if (p.directionsUri) links.append(link("", p.directionsUri, "Directions ↗"));
       if (p.websiteUri) links.append(link("", p.websiteUri, "Website ↗"));
+      if (p.reservationUri) links.append(link("", p.reservationUri, "Reserve ↗"));
       if (p.phone) links.append(link("", "tel:" + p.phone.replace(/[^+\d]/g, ""), p.phone));
       b.append(el("div", "grow"), links);
       c.append(b);

@@ -121,6 +121,7 @@ async def test_tools_end_to_end(service):
         assert route.structured_content["routes"][0]["duration"] == "656s"
         place = await client.call_tool("maps_get_place", {"id": "ChIJwVp-8psHbUcRuN43n5iK72Y"})
         assert place.structured_content["displayName"]["text"] == "Albertina"
+        assert place.structured_content["reservationLinks"] == [] and place.structured_content["menuUri"] is None
 
 
 async def test_errors_are_typed_and_never_echo_exceptions(service, transport):

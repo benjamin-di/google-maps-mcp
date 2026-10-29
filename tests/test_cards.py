@@ -47,6 +47,7 @@ async def test_show_places_cards(service):
     assert albertina["todayHours"] == "10 AM–9 PM" and albertina["openNow"] is True
     assert albertina["directionsUri"].endswith(f"destination_place_id={ALBERTINA}")
     assert cafe["displayName"] == "Café Central" and cafe["openNow"] is None and cafe["todayHours"] is None
+    assert albertina["reservationUri"] is None  # Google lists no booking site for a museum
     assert view["photos"][ALBERTINA].startswith("https://lh3.googleusercontent.com/")
     assert "lh3.googleusercontent" not in json.dumps(shown)
 

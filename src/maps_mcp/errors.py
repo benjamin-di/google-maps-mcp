@@ -56,11 +56,16 @@ class MapsError(Exception):
         self.detail = detail
         self.log_detail = log_detail
 
+    @property
+    def retryable(self) -> bool:
+        return self.code in RETRYABLE
+
+    @property
+    def next_step(self) -> str:
+        return f"{self.detail}. {NEXT_STEP[self.code]}" if self.detail else NEXT_STEP[self.code]
+
     def payload(self) -> dict[str, Any]:
-        next_step = NEXT_STEP[self.code]
-        if self.detail:
-            next_step = f"{self.detail}. {next_step}"
-        return {"code": self.code, "next_step": next_step, "retryable": self.code in RETRYABLE}
+        return {"code": self.code, "next_step": self.next_step, "retryable": self.retryable}
 
 
 def invalid(detail: str) -> MapsError:

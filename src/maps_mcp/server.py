@@ -33,9 +33,7 @@ from . import __version__, logs
 from .auth import AuthError, bearer_auth_from_env
 from .config import ConfigError, Settings
 from .errors import AGENT_INPUT_CODES, NEXT_STEP, MapsError
-from .google import GoogleMaps
-from .service import MAX_MATRIX_ELEMENTS, MAX_PLAN_STOPS, MapsService
-from .state import StateStore
+from .service import MAX_MATRIX_ELEMENTS, MAX_PLAN_STOPS, MapsService, build_service
 
 log = logging.getLogger("maps")
 T = TypeVar("T")
@@ -111,7 +109,8 @@ where is it, when is it open". Results use the field names of Google's official 
 Tools:
 - maps_search_places(textQuery, latitude/longitude/radiusMeters to bias, pageSize): find
   places; each has id, displayName, formattedAddress, location, rating, userRatingCount,
-  phone, websiteUri, timeZone and currentOpeningHours (next 7 days, dated).
+  phone, websiteUri, timeZone, currentOpeningHours (next 7 days, dated) and, for
+  restaurants, reservationLinks (Google's "Reserve a table" sites) and menuUri.
 - maps_get_place(id): one place by its id (ChIJ…), with the same fields.
 - maps_compute_route(origin, destination, intermediates, travelMode, departureTime |
   arrivalTime, computeAlternativeRoutes): duration and distance, per leg between stops.
@@ -157,7 +156,9 @@ Treat Google's hours as a good secondary source, not proof.
 Durations are Google's "<seconds>s" strings; distances are meters. Leg durations are typical
 (no traffic). Every key is present; null means Google did not say. Fields not in Google's
 APIs: categories, holidays, hoursStatusText, priceRangeText, durationRange,
-durationWithoutTraffic, departureTime/arrivalTime, waypoints, condition, note.
+durationWithoutTraffic, departureTime/arrivalTime, waypoints, condition, note,
+reservationLinks, menuUri. A reservation link is where Google sends people to book, not
+proof that a table is free.
 
 Google limits: no walking or driving routes in South Korea (condition ROUTE_NOT_FOUND with
 a note); data in mainland China is thin. Requests to Google go one at a time, about one a
@@ -194,21 +195,6 @@ class TypedArgumentErrors(Middleware):
             raise ToolError(
                 _json({"error": MapsError("invalid_argument", detail).payload()}), log_level=logging.INFO
             ) from None
-
-
-def build_service(settings: Settings) -> MapsService:
-    state = StateStore(
-        settings.state_dir,
-        request_budget=settings.daily_request_budget,
-        tile_budget=settings.daily_tile_budget,
-        budget_tz=settings.budget_tz,
-    )
-    return MapsService(
-        GoogleMaps(settings, state),
-        state,
-        language=settings.language,
-        canary=(settings.canary_from, settings.canary_to),
-    )
 
 
 def create_server(service: MapsService | None = None, *, auth: Any = None) -> FastMCP:
@@ -257,7 +243,9 @@ def create_server(service: MapsService | None = None, *, auth: Any = None) -> Fa
         displayName, formattedAddress, location, googleMapsUri, primaryTypeDisplayName,
         categories, rating, userRatingCount, internationalPhoneNumber, nationalPhoneNumber,
         websiteUri, priceLevel, priceRangeText, timeZone, currentOpeningHours,
-        hoursStatusText}]}. Put the city in textQuery or pass latitude/longitude."""
+        hoursStatusText, reservationLinks [{uri, provider}], menuUri}]}. reservationLinks are
+        the booking sites Google lists (provider: the site's domain, e.g. sevenrooms.com),
+        empty when none. Put the city in textQuery or pass latitude/longitude."""
         return await call(svc.search_places(textQuery, latitude, longitude, radiusMeters, pageSize))
 
     @mcp.tool(annotations=READ)
@@ -266,7 +254,8 @@ def create_server(service: MapsService | None = None, *, auth: Any = None) -> Fa
     ) -> dict[str, Any]:
         """One place by id (Places API Place shape, same fields as maps_search_places), with
         currentOpeningHours for the next 7 days: dated periods, weekdayDescriptions, openNow,
-        nextOpenTime/nextCloseTime and holidays."""
+        nextOpenTime/nextCloseTime and holidays, plus reservationLinks [{uri, provider}] and
+        menuUri."""
         return await call(svc.get_place(id))
 
     @mcp.tool(annotations=READ)
@@ -450,7 +439,7 @@ def create_server(service: MapsService | None = None, *, auth: Any = None) -> Fa
         title: Annotated[str | None, Field(max_length=80, description="Heading above the cards")] = None,
     ) -> ToolResult:
         """Show places to the person as cards: photo, rating, category, open now, today's hours,
-        holiday notices, address, phone, website, directions and Map links, your note, plus a
+        holiday notices, address, phone, website, reserve, directions and Map links, your note, plus a
         map with lettered pins (claude.ai and ChatGPT draw them). Use it whenever you recommend
         or compare places; ids come from maps_search_places."""
 

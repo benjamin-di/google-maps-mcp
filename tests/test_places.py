@@ -84,3 +84,76 @@ async def test_unknown_place(service):
     with pytest.raises(MapsError) as err:
         await service.get_place("ChIJAAAAAAAABDQRDFz86-Qpbto")  # valid shape, no such place here
     assert err.value.code == "place_not_found"
+
+
+BOOKING = [
+    # [url, source domain, ...] as Google lists "Reserve a table" (synthetic, example.com hosts).
+    ["https://www.example.com/r/central?src=ggl&utm_source=google&rwg_token=AJKvS9x%3D%3D", "example.com", None],
+    ["https://book.example.com/v/42?ref=7", "book.example.com"],
+    ["javascript:alert(1)", "evil.example"],
+]
+
+
+def with_links(name: str) -> object:
+    from conftest import load
+
+    raw = load(name)
+    raw[6][46] = BOOKING
+    raw[6][38] = ["https://www.example.com/menu?utm_medium=maps", "example.com"]
+    return raw
+
+
+async def test_place_reservation_links_and_menu(service, transport):
+    from conftest import default_responder
+
+    transport.responder = lambda path: (
+        with_links("details_cafe.json") if "0x476d0797f70c3b2f" in path else default_responder(path)
+    )
+    place = await service.get_place(CAFE_CENTRAL)
+    assert place["reservationLinks"] == [
+        # Google's attribution parameters are dropped, the site's own (src, ref) kept.
+        {"uri": "https://www.example.com/r/central?src=ggl", "provider": "example.com"},
+        {"uri": "https://book.example.com/v/42?ref=7", "provider": "book.example.com"},
+    ]
+    assert place["menuUri"] == "https://www.example.com/menu"
+
+
+async def test_places_without_links(service):
+    place = await service.get_place(ALBERTINA)
+    assert place["reservationLinks"] == [] and place["menuUri"] is None
+    found = await service.search_places("museum")
+    assert all(p["reservationLinks"] == [] and p["menuUri"] is None for p in found["places"])
+
+
+async def test_search_results_carry_reservation_links(service, transport):
+    from conftest import default_responder, load
+
+    from maps_mcp.vendor.gmaps.rpc.parser import _search_place_data_entries
+
+    raw = load("search_single.json")
+    for _, place_data in _search_place_data_entries(raw):
+        place_data[46] = BOOKING[:1]
+    transport.responder = lambda path: raw if path.startswith("/search") else default_responder(path)
+    found = await service.search_places("Café Sperl Gumpendorfer Straße")
+    assert found["places"][0]["reservationLinks"] == [
+        {"uri": "https://www.example.com/r/central?src=ggl", "provider": "example.com"}
+    ]
+    assert len(transport.paths) == 1  # no details request
+
+
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [
+        ("https://a.example.com/x?utm_source=g&UTM_campaign=y", "https://a.example.com/x"),
+        ("https://a.example.com/x?q=a%26b&gclid=1#frag", "https://a.example.com/x?q=a%26b#frag"),
+        ("http://a.example.com/", "http://a.example.com/"),
+        ("ftp://a.example.com/", None),
+        ("/relative", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_link_uri(given, expected):
+    from maps_mcp.shapes import link_uri
+
+    assert link_uri(given) == expected

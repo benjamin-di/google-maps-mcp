@@ -13,6 +13,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 from . import __version__, planner, shapes, staticmap
+from .config import Settings
 from .errors import MapsError, invalid
 from .google import GoogleMaps
 from .state import StateStore, iso
@@ -551,6 +552,7 @@ class MapsService:
                     "location": shaped["location"],
                     "phone": shaped["internationalPhoneNumber"] or shaped["nationalPhoneNumber"],
                     "websiteUri": shaped["websiteUri"],
+                    "reservationUri": shaped["reservationLinks"][0]["uri"] if shaped["reservationLinks"] else None,
                     "googleMapsUri": shaped["googleMapsUri"],
                     "directionsUri": "https://www.google.com/maps/dir/?"
                     + urlencode({"api": "1", "destination": name or place_id, "destination_place_id": place_id}),
@@ -701,3 +703,20 @@ class MapsService:
         if code != "ok":
             log.warning("canary failed: %s", code)
         return {"ok": code == "ok", "code": code, "checked_at": iso(now), "cached": False}
+
+
+def build_service(settings: Settings) -> MapsService:
+    """The service with its own state (budgets, breaker) and Google client: what the server and
+    the library (``maps_mcp.places``) run."""
+    state = StateStore(
+        settings.state_dir,
+        request_budget=settings.daily_request_budget,
+        tile_budget=settings.daily_tile_budget,
+        budget_tz=settings.budget_tz,
+    )
+    return MapsService(
+        GoogleMaps(settings, state),
+        state,
+        language=settings.language,
+        canary=(settings.canary_from, settings.canary_to),
+    )

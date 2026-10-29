@@ -20,13 +20,13 @@ routes and places are drawn as interactive cards.
 
 | Tool | What it returns | Google requests |
 |---|---|---|
-| `maps_search_places(textQuery, latitude, longitude, radiusMeters, pageSize)` | Places like `places:searchText`: id, name, address, location, rating, review count, category, phone, website, price, time zone, `currentOpeningHours` | 1 |
+| `maps_search_places(textQuery, latitude, longitude, radiusMeters, pageSize)` | Places like `places:searchText`: id, name, address, location, rating, review count, category, phone, website, price, time zone, `currentOpeningHours`, `reservationLinks`, `menuUri` | 1 |
 | `maps_get_place(id)` | One place by its id (`ChIJ…`), the same fields | 1 |
 | `maps_compute_route(origin, destination, intermediates≤8, travelMode, departureTime \| arrivalTime, computeAlternativeRoutes, includeSteps, includePolyline)` | Like `computeRoutes`: distance and duration per route and leg; for driving, duration in traffic (now or at the given time), typical duration, Google's range ("26–50 min") and the arrival or departure time; optional turn-by-turn steps and route line; a Google Maps link | 1 |
 | `maps_compute_route_matrix(origins, destinations, travelMode, departureTime)` | Like `computeRouteMatrix`, up to 25 pairs | 1 per pair |
 | `maps_plan_route(origin, stops≤8, destination \| roundTrip, travelMode, departureTime, dwellMinutes, optimizeOrder)` | A multi-stop plan: the fastest order, arrival and leave time per stop, whether each stop is open on arrival, warnings | 1 + up to 5 candidate orders + 1 per stop for hours |
 | `maps_show_route(...)` | The same plan as an interactive card | as `maps_plan_route` |
-| `maps_show_places(items[{id, note}]≤10, title)` | Place cards with photo, rating, open now, today's hours, holidays, links, and a pin map | 1 per place |
+| `maps_show_places(items[{id, note}]≤10, title)` | Place cards with photo, rating, open now, today's hours, holidays, links (including "Reserve"), and a pin map | 1 per place |
 | `maps_static_map(center, zoom, size, maptype, markers, route)` | A JPEG like the Static Maps API: an area, lettered pins and/or a route line; roadmap, satellite, hybrid or terrain | the lookups, plus about 10-25 map tiles |
 | `maps_status(check)` | Daily budgets, breaker, last error; `check=true` runs one real check (cached 55 min) | 0 (or 3) |
 
@@ -39,6 +39,16 @@ Durations are Google's `"<seconds>s"` strings and distances are meters. Every ke
 hours land on the right day: `periods`, `weekdayDescriptions`, `openNow`,
 `nextOpenTime`/`nextCloseTime` (in the place's time zone), and `holidays`: the holiday Google
 attaches to a date, with `confirmed: false` when Maps only says it "might affect these hours".
+
+**Reservations and menus.** Where Google shows "Reserve a table", `reservationLinks` lists the
+booking sites: `[{"uri": "<the booking page>", "provider":
+"opentable.com"}]`, `provider` being the site's domain as Google names it (OpenTable,
+TableCheck, SevenRooms, …), and `[]` when Google lists none. `menuUri` is the menu link, or
+`null`. Search results carry them too, at no extra request. Only http(s) links are kept, and
+the parameters that merely attribute the visit to Google (`rwg_token`, `utm_*`, `gclid`,
+`gbraid`, `wbraid`) are removed; everything else, including a site's own `src=` or `ref=`,
+stays as Google gave it, since it can select the venue or the booking flow. A link says where
+to book, not that a table is free.
 
 **Turn-by-turn.** `includeSteps` adds Routes API `steps` per leg (`navigationInstruction`
 {`maneuver`, `instructions`} such as "Turn left onto Gertrude-Fröhlich-Sandner-Straße",
@@ -108,6 +118,40 @@ docker build -t google-maps-mcp .
 listens on 127.0.0.1:8000 (or `$MAPS_HOST`) and requires `MCP_BEARER_TOKEN`; the image sets
 `MAPS_HOST=0.0.0.0`.
 
+## Use as a library
+
+Other Python programs can search places and read them without MCP, through the same service,
+pacing (one request at a time), daily budget, breaker, cache and errors as the server:
+
+```python
+from maps_mcp.places import MapsError, PlacesClient
+
+async with PlacesClient(state_dir="/var/lib/myapp/maps", daily_request_budget=200, budget_tz="Europe/Vienna") as maps:
+    found = await maps.search_places("Steirereck, Vienna", page_size=1)
+    place = await maps.get_place(found["places"][0]["id"])
+    for link in place["reservationLinks"]:
+        print(link["provider"], link["uri"])
+```
+
+- `PlacesClient(*, state_dir=None, daily_request_budget=1000, budget_tz="UTC", language="en",
+  min_interval_s=1.0, request_timeout_s=15.0)`: settings come from these arguments only, never
+  from `MAPS_*` variables; out-of-range values raise `ConfigError`. Without `state_dir`, state
+  goes to the per-user state directory. Use one client per process and give each process its
+  own state directory (the budget file is not shared safely between processes; pacing is per
+  process).
+- `await search_places(text_query, *, latitude=None, longitude=None, radius_meters=None,
+  page_size=5)` returns `{"places": [...]}` exactly as `maps_search_places`;
+  `await get_place(place_id)` returns one place exactly as `maps_get_place` (`ChIJ…` or
+  `0x…:0x…`). `status()` returns the budget, breaker and last error without a request;
+  `aclose()` (or `async with`) closes the connection.
+- Every failure raises `MapsError` with `code` (one of `ERROR_CODES`, the table under
+  [Terms and limits](#terms-and-limits)), `retryable` and `next_step`.
+
+Stability: `maps_mcp.places` (`PlacesClient`, `MapsError`, `ConfigError`, `ERROR_CODES`,
+`RETRYABLE_CODES`) and the place fields follow semantic versioning from 0.6.0: a minor release
+may add fields, error codes or optional arguments; removing or changing one needs a major
+release. Other modules are internal. Pin `google-maps-keyless-mcp>=0.6,<1`.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -132,8 +176,9 @@ and geometry) and `/maps/vt` (map tiles). Requests carry no account and no key; 
 consent cookies are fetched once and kept in the state directory. Parsing comes from
 [gmaps-scraper](https://github.com/nick-choudhary/gmaps-scraper), vendored in
 `src/maps_mcp/vendor/gmaps` from a fork that adds this project's contributions, each offered
-upstream as a pull request (see NOTICE). Refresh it with `scripts/vendor-gmaps.sh`; never edit
-the vendored copy by hand.
+upstream as a pull request (see NOTICE). Upstream has been inactive since July 2026, so we maintain
+that fork: its pull requests stay open as offers, and no new ones are opened until upstream responds.
+Refresh the vendored copy with `scripts/vendor-gmaps.sh`; never edit it by hand.
 
 It is a deliberately small, polite client: one request at a time, about one a second, daily
 budgets, results cached in memory (places 6 h, walking and cycling routes 12 h, driving

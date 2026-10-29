@@ -510,6 +510,9 @@ def parse_search_response(raw_data: Any) -> list[ParsedPlace]:
         if qa:
             place.quick_amenities = [str(x) for x in qa if isinstance(x, str)]
 
+        # Links (reservations, order, menu)
+        _extract_links_new(place_data, place)
+
         # Ad flag
         place.is_ad = bool(_safe_bool(place_data, F_IS_AD))
 
@@ -599,34 +602,7 @@ def parse_place_details_response(raw_data: Any) -> ParsedPlace | None:
         place.quick_amenities = [str(x) for x in qa if isinstance(x, str)]
 
     # Links (reservations, order, menu, owner)
-    res = _safe_list(place_data, F_RESERVATIONS)
-    if res:
-        for r in res:
-            if isinstance(r, list) and len(r) > LINK_SOURCE_INDEX:
-                place.reservations.append(
-                    {
-                        "link": str(r[LINK_URL_INDEX]) if r[LINK_URL_INDEX] else "",
-                        "source": str(r[LINK_SOURCE_INDEX]) if r[LINK_SOURCE_INDEX] else "",
-                    }
-                )
-
-    oo = _safe_list(place_data, F_ORDER_ONLINE)
-    if oo:
-        for item in oo:
-            if isinstance(item, list) and len(item) > LINK_SOURCE_INDEX:
-                place.order_online.append(
-                    {
-                        "link": str(item[LINK_URL_INDEX]) if item[LINK_URL_INDEX] else "",
-                        "source": str(item[LINK_SOURCE_INDEX]) if item[LINK_SOURCE_INDEX] else "",
-                    }
-                )
-
-    menu = _safe_list(place_data, F_MENU)
-    if menu and len(menu) > LINK_SOURCE_INDEX:
-        place.menu = {
-            "link": str(menu[LINK_URL_INDEX]) if menu[LINK_URL_INDEX] else "",
-            "source": str(menu[LINK_SOURCE_INDEX]) if menu[LINK_SOURCE_INDEX] else "",
-        }
+    _extract_links_new(place_data, place)
 
     owner = _safe_list(place_data, F_OWNER)
     if owner and len(owner) > OWNER_LINK_INDEX:
@@ -1116,6 +1092,41 @@ def _extract_media_new(pd: list[Any], place: ParsedPlace) -> None:
                 url = str(item[THUMBNAIL_PHOTO_DATA_INDEX][THUMBNAIL_URL_INDEX])
                 if url.startswith("http") and not place.thumbnail:
                     place.thumbnail = url
+
+
+def _extract_links_new(pd: list[Any], place: ParsedPlace) -> None:
+    """Reservation, online-order and menu links (``[url, source domain, ...]``).
+
+    Search results and place details carry them at the same indices.
+    """
+    res = _safe_list(pd, F_RESERVATIONS)
+    if res:
+        for r in res:
+            if isinstance(r, list) and len(r) > LINK_SOURCE_INDEX:
+                place.reservations.append(
+                    {
+                        "link": str(r[LINK_URL_INDEX]) if r[LINK_URL_INDEX] else "",
+                        "source": str(r[LINK_SOURCE_INDEX]) if r[LINK_SOURCE_INDEX] else "",
+                    }
+                )
+
+    oo = _safe_list(pd, F_ORDER_ONLINE)
+    if oo:
+        for item in oo:
+            if isinstance(item, list) and len(item) > LINK_SOURCE_INDEX:
+                place.order_online.append(
+                    {
+                        "link": str(item[LINK_URL_INDEX]) if item[LINK_URL_INDEX] else "",
+                        "source": str(item[LINK_SOURCE_INDEX]) if item[LINK_SOURCE_INDEX] else "",
+                    }
+                )
+
+    menu = _safe_list(pd, F_MENU)
+    if menu and len(menu) > LINK_SOURCE_INDEX:
+        place.menu = {
+            "link": str(menu[LINK_URL_INDEX]) if menu[LINK_URL_INDEX] else "",
+            "source": str(menu[LINK_SOURCE_INDEX]) if menu[LINK_SOURCE_INDEX] else "",
+        }
 
 
 def _extract_about_new(pd: list[Any], place: ParsedPlace) -> None:

@@ -3,15 +3,16 @@
 Places: Places API (New) ``Place``; routes: Routes API v2 ``Route``/``RouteLeg`` and the
 ``computeRouteMatrix`` element. Fields the official APIs do not have, but the Maps page gives us,
 are added under their own names (``categories``, ``holidays``, ``hoursStatusText``,
-``durationRange``, ``departureTime``/``arrivalTime``, ``waypoints``). Every key is present; null
-means Google did not say. Durations are Google's ``"<seconds>s"`` strings, distances integers.
+``durationRange``, ``departureTime``/``arrivalTime``, ``waypoints``, ``reservationLinks``,
+``menuUri``). Every key is present; null means Google did not say. Durations are Google's
+``"<seconds>s"`` strings, distances integers.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import unquote_plus, urlencode, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .vendor.gmaps.rpc.directions import (
@@ -38,6 +39,45 @@ URL_TRAVEL_MODES = {"drive": "driving", "walk": "walking", "bicycle": "bicycling
 
 def place_uri(place_id: str | None) -> str | None:
     return f"https://www.google.com/maps/place/?q=place_id:{place_id}" if place_id else None
+
+
+# Query parameters that only attribute the visit to Google (Reserve with Google's per-request
+# conversion token, campaign tags): never needed to open the page. Others (src=, ref=) can be the
+# site's own and are kept.
+TRACKING_PARAMS = frozenset({"rwg_token", "gclid", "gbraid", "wbraid"})
+
+
+def link_uri(value: str | None) -> str | None:
+    """An outbound http(s) link from Google, without Google's attribution parameters."""
+    text = (value or "").strip()
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return None
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        return None
+    # Drop whole "name=value" pieces; the rest of the URL stays byte for byte as Google gave it.
+    kept = [
+        piece
+        for piece in parts.query.split("&")
+        if piece and not _is_tracking(unquote_plus(piece.split("=", 1)[0]).lower())
+    ]
+    return urlunsplit(parts._replace(query="&".join(kept)))
+
+
+def _is_tracking(name: str) -> bool:
+    return name in TRACKING_PARAMS or name.startswith("utm_")
+
+
+def reservation_links(place: ParsedPlace) -> list[dict[str, Any]]:
+    """Google's "Reserve a table" links: ``[{uri, provider}]``, provider being the booking
+    site's domain as Google names it (``sevenrooms.com``, ``tablecheck.com``), or null."""
+    links = []
+    for item in place.reservations or []:
+        uri = link_uri(item.get("link"))
+        if uri and all(link["uri"] != uri for link in links):
+            links.append({"uri": uri, "provider": (item.get("source") or "").strip().lower() or None})
+    return links
 
 
 def _formatted_address(place: ParsedPlace) -> str | None:
@@ -219,6 +259,8 @@ def place(place: ParsedPlace, now: dt.datetime, language: str = "en") -> dict[st
         "timeZone": {"id": place.timezone} if place.timezone else None,
         "currentOpeningHours": opening_hours(place, now),
         "hoursStatusText": place.status or None,
+        "reservationLinks": reservation_links(place),
+        "menuUri": link_uri((place.menu or {}).get("link")),
     }
 
 

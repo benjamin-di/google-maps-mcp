@@ -431,7 +431,7 @@ server = [
 
 [[package]]
 name = "google-maps-keyless-mcp"
-version = "0.5.8"
+version = "0.6.1"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
