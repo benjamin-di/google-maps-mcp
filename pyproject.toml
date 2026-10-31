@@ -1,6 +1,6 @@
 [project]
 name = "google-maps-keyless-mcp"
-version = "0.6.1"
+version = "0.6.2"
 description = "Read-only MCP server for Google Maps travel times, routes, places and map images, without an API key"
 readme = "README.md"
 license = "MIT"
@@ -9,7 +9,8 @@ authors = [{ name = "benjamin-di" }]
 requires-python = ">=3.12"
 dependencies = [
     # FastMCP 4 (MCP SDK 2): stateless JSON over streamable HTTP, or stdio.
-    "fastmcp==4.0.10",
+    # Permit consumers to select a patched release within the tested API series.
+    "fastmcp>=4.1.4,<4.2",
     # The vendored gmaps-scraper (src/maps_mcp/vendor/gmaps) talks to Google with httpx.
     "httpx>=0.27,<0.29",
     # Places' opening hours are computed in the place's own time zone.
