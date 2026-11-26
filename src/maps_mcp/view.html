@@ -29,6 +29,12 @@
     font-size: var(--font-text-sm-size, 14px); line-height: 1.4; color: var(--color-text-primary, var(--m-text));
   }
   main { padding: 4px 2px 8px; }
+  footer { padding: 0 4px 6px; color: var(--color-text-secondary, var(--m-muted)); font-size: 12px;
+           background: var(--color-background-primary, var(--m-card)); overflow-wrap: anywhere; }
+  footer details summary { color: inherit; font-size: inherit; padding: 6px 0; margin: 0; min-height: 32px; }
+  footer summary:focus-visible { outline: 3px solid currentColor; outline-offset: 2px; }
+  footer p { margin: 6px 0; }
+  footer code { display: block; white-space: normal; overflow-wrap: anywhere; user-select: all; }
   header { margin: 0 2px 10px; }
   h1 { margin: 0; font-size: var(--font-heading-sm-size, 16px); font-weight: var(--font-weight-semibold, 600); }
   .sub { color: var(--color-text-secondary, var(--m-muted)); font-size: 13px; margin-top: 2px; }
@@ -122,6 +128,7 @@
 </head>
 <body>
 <main id="root"><p class="status">Loading map…</p></main>
+<footer aria-label="Application build" title="Source revision: __BUILD_REVISION_FULL__"><details><summary>Maps v<span>__BUILD_VERSION__</span> · <span>__BUILD_REVISION__</span></summary><p>Source revision <code>__BUILD_REVISION_FULL__</code></p></details></footer>
 <script>
 (function () {
   "use strict";
@@ -600,7 +607,7 @@
   }
 
   request("ui/initialize", {
-    appInfo: { name: "maps-view", version: "__VERSION__" },
+    appInfo: { name: "maps-view", version: __VERSION_JSON__ },
     appCapabilities: { availableDisplayModes: ["inline"] },
     protocolVersion: "2026-01-26",
   }).then((r) => {

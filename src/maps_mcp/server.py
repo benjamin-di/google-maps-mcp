@@ -9,10 +9,11 @@ are paced, budgeted and behind a breaker, and tool results never carry exception
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import logging
 import os
-import sys
+import re
 from collections.abc import Awaitable
 from importlib import resources
 from typing import Annotated, Any, Literal, TypeVar
@@ -32,7 +33,8 @@ from starlette.responses import JSONResponse
 from . import __version__, logs
 from .auth import AuthError, bearer_auth_from_env
 from .config import ConfigError, Settings
-from .errors import AGENT_INPUT_CODES, NEXT_STEP, MapsError
+from .errors import AGENT_INPUT_CODES, MapsError
+from .identity import BUILD, BuildIdentity
 from .service import MAX_MATRIX_ELEMENTS, MAX_PLAN_STOPS, MapsService, build_service
 
 log = logging.getLogger("maps")
@@ -54,7 +56,24 @@ VIEW_CSP = {
     ]
 }
 VIEW_META = "maps/view"  # the card's line, turns and photos ride in the result's _meta: the model is not sent them
-VIEW_HTML = (resources.files(__package__) / "view.html").read_text(encoding="utf-8").replace("__VERSION__", __version__)
+
+
+def render_view(build: BuildIdentity) -> str:
+    """Escape separately for HTML text and inline JavaScript string literals."""
+    version_json = json.dumps(build.version).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+    values = {
+        "__VERSION_JSON__": version_json,
+        "__BUILD_VERSION__": html.escape(build.version),
+        "__BUILD_REVISION_FULL__": html.escape(build.source_revision, quote=True),
+        "__BUILD_REVISION__": html.escape(build.source_revision[:12]),
+    }
+    template = (resources.files(__package__) / "view.html").read_text(encoding="utf-8")
+    return re.sub(
+        r"__(?:VERSION_JSON|BUILD_VERSION|BUILD_REVISION_FULL|BUILD_REVISION)__", lambda m: values[m[0]], template
+    )
+
+
+VIEW_HTML = render_view(BUILD)
 # Tool and resource lists change only on deploy; MCP 2026-07-28 clients may cache them for 10 minutes.
 LIST_CACHE_TTL = 600
 
@@ -96,77 +115,22 @@ class RouteSpec(BaseModel):
     travelMode: TravelMode = "DRIVE"
 
 
-_ERRORS = "\n".join(f"- {code}: {text}" for code, text in NEXT_STEP.items())
+INSTRUCTIONS = """\
+Read-only travel times, routes, and places from signed-out google.com/maps (Places API New and
+Routes API JSON shapes; nothing here books, saves, or changes anything).
 
-INSTRUCTIONS = f"""\
-Travel times and places from Google Maps (the public google.com/maps web page, signed out).
-Read-only; nothing here books, saves or changes anything.
-
-Use it to answer "how long from A to B" (walking, driving, cycling) and "what is this place,
-where is it, when is it open". Results use the field names of Google's official Places API
-(New) and Routes API, so they read like those APIs' JSON.
-
-Tools:
-- maps_search_places(textQuery, latitude/longitude/radiusMeters to bias, pageSize): find
-  places; each has id, displayName, formattedAddress, location, rating, userRatingCount,
-  phone, websiteUri, timeZone, currentOpeningHours (next 7 days, dated) and, for
-  restaurants, reservationLinks (Google's "Reserve a table" sites) and menuUri.
-- maps_get_place(id): one place by its id (ChIJ…), with the same fields.
-- maps_compute_route(origin, destination, intermediates, travelMode, departureTime |
-  arrivalTime, computeAlternativeRoutes): duration and distance, per leg between stops.
-  DRIVE gives duration in traffic (now, or predicted for the time you give), staticDuration
-  (typical), durationRange (e.g. "26–50 min") and the arrival/departure time.
-  googleMapsUri opens the same route on a phone.
-  includeSteps adds the turn-by-turn directions per leg (steps with instructions such as
-  "Turn left onto Gertrude-Fröhlich-Sandner-Straße", maneuver, distance, time, notices like
-  "Toll road") and the grouped segments Maps lists ("Get on A4"); includePolyline adds the
-  route line.
-- maps_compute_route_matrix(origins, destinations, travelMode, departureTime): durations between up to
-  {MAX_MATRIX_ELEMENTS} pairs, e.g. to order a day's stops.
-- maps_static_map(center, zoom, size, maptype, markers, route): a map image (like the Static
-  Maps API) of an area around a place, lettered pins (A, B, …) and/or a route drawn in blue,
-  from Google's own map tiles; roadmap, satellite, hybrid or terrain. Without center/zoom it
-  fits the pins and route. Returns the JPEG plus a legend (labels to places, route summary).
-- maps_plan_route(origin, stops, destination | roundTrip, travelMode, departureTime,
-  dwellMinutes, optimizeOrder): a multi-stop plan. With optimizeOrder it finds the best order
-  of up to {MAX_PLAN_STOPS} stops (straight-line ranking of every order, then real Google routes for the best
-  few and the given order), and times the visit: arrival per stop, stays, and whether each
-  stop is open then (openingStatus: open, closes_during_visit, closed, unknown) with warnings.
-- maps_show_route(...same as plan...): the same, shown to the person as a card: an
-  interactive map (route, lettered pins, map/satellite), the stops with arrival times and
-  open/closed status, turn-by-turn steps per leg and an "Open in Google Maps" button.
-- maps_show_places(items [{{id, note}}], title): place cards with photo, rating, open now,
-  today's hours, holidays, address, phone, website, directions, and a map with lettered pins.
-- maps_status(check): budget, breaker and last error; check=true runs the live canary.
-
-Presenting: whenever you give someone a route, directions or a day's stops, call
-maps_show_route; whenever you recommend or compare places, call maps_show_places with the
-picks and a one-line note each. Do it without being asked, then add only what the card does
-not show. claude.ai and ChatGPT draw the cards; other clients get the same data as JSON.
-
-Stops: text is geocoded by Google and can pick the wrong place for a short or ambiguous
-name; for exact stops pass the id from maps_search_places, or 'lat,lng'. Each route lists
-the resolved waypoints: check them. Times are local wall-clock time at the stop.
-
-Opening hours: currentOpeningHours has periods with dates, weekdayDescriptions, openNow,
-nextOpenTime/nextCloseTime (in the place's time zone), and holidays: the holiday Google
-attaches to a date with confirmed=false when Maps only says it "might affect these hours".
-Treat Google's hours as a good secondary source, not proof.
-
-Durations are Google's "<seconds>s" strings; distances are meters. Leg durations are typical
-(no traffic). Every key is present; null means Google did not say. Fields not in Google's
-APIs: categories, holidays, hoursStatusText, priceRangeText, durationRange,
-durationWithoutTraffic, departureTime/arrivalTime, waypoints, condition, note,
-reservationLinks, menuUri. A reservation link is where Google sends people to book, not
-proof that a table is free.
-
-Google limits: no walking or driving routes in South Korea (condition ROUTE_NOT_FOUND with
-a note); data in mainland China is thin. Requests to Google go one at a time, about one a
-second (map tiles a few at once), within a daily budget: avoid loops; reuse results (they are
-cached for a while).
-
-Errors come as {{"error": {{"code", "next_step", "retryable"}}}}:
-{_ERRORS}
+- Presenting: call maps_show_route whenever giving a route, directions, or multi-stop plan, and
+  maps_show_places whenever recommending or comparing places (with a one-line note each), without
+  waiting to be asked.
+- Stops: free-text names can geocode ambiguously; prefer place ids (ChIJ...) from
+  maps_search_places or 'lat,lng', and verify returned waypoints. Times are local wall-clock time.
+- Units: durations are "<seconds>s", distances are meters, leg durations are typical (no traffic),
+  and null means Google did not say.
+- Caveats: treat Google opening hours and holidays as secondary sources, not proof; reservation
+  links are booking sites, not proof of availability.
+- Limits: no walking/driving routes in South Korea; mainland China data is thin. Requests are
+  paced and daily-budgeted: avoid loops and reuse cached results. Errors return
+  {"error": {"code", "next_step", "retryable"}}; follow next_step.
 """
 
 
@@ -480,6 +444,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--port", type=int, default=8000, help="HTTP port (default 8000)")
     args = parser.parse_args(argv)
     logs.setup("maps")
+    logs.event(log, "server starting", transport=args.transport)
     try:
         if args.transport == "stdio":
             create_server().run(transport="stdio", show_banner=False)
@@ -489,9 +454,16 @@ def main(argv: list[str] | None = None) -> None:
         server = create_server(auth=auth)
     except (AuthError, ConfigError) as exc:
         # Our own startup message (configuration), never a tool result.
-        print("maps-mcp:", *exc.args, file=sys.stderr)
+        log.error("maps-mcp: %s", " ".join(map(str, exc.args)))
         raise SystemExit(1) from None
-    server.run(transport="streamable-http", host=args.host, port=args.port, show_banner=False, **HTTP_OPTIONS)
+    server.run(
+        transport="streamable-http",
+        host=args.host,
+        port=args.port,
+        show_banner=False,
+        uvicorn_config={"log_config": None},
+        **HTTP_OPTIONS,
+    )
 
 
 if __name__ == "__main__":

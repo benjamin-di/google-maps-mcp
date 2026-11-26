@@ -109,8 +109,21 @@ The image is two stages: the pinned dependencies (`Dockerfile.deps`) and the sou
 
 ```bash
 docker build -f Dockerfile.deps -t maps-mcp-deps .
-docker build -t google-maps-mcp .
+docker build --build-arg VERSION="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')" \
+  --build-arg VCS_REF="$(git rev-parse HEAD)" -t google-maps-mcp .
 ```
+
+Images embed the application version and full source revision before installation. Missing
+or conflicting build inputs fail the build; environment variables cannot override that identity.
+Source installations without embedded metadata report an `unknown` revision (and `dev` if
+the package is not installed). The MCP App's visible footer identifies the HTML-producing
+build; native MCP initialization keeps the installed product version.
+
+The owned output surfaces are `view.html` (the only HTML page) and stderr JSON logging in
+`logs.py`, including startup/configuration errors. Retained logs carry `service`, `version`,
+`source_revision` and `instance`; DEBUG records retain the same identity. The instance is
+an opaque identifier generated for each process. HTTP access/client and vendored
+request logging remain suppressed below WARNING; stdio stdout contains MCP messages only.
 
 ### Command line
 
@@ -178,7 +191,16 @@ consent cookies are fetched once and kept in the state directory. Parsing comes 
 `src/maps_mcp/vendor/gmaps` from a fork that adds this project's contributions, each offered
 upstream as a pull request (see NOTICE). Upstream has been inactive since July 2026, so we maintain
 that fork: its pull requests stay open as offers, and no new ones are opened until upstream responds.
-Refresh the vendored copy with `scripts/vendor-gmaps.sh`; never edit it by hand.
+The maintained source is locked in `fleet/gmaps-source.json`, including its canonical
+upstream tag and every added commit. `make check` verifies reconstruction plus the
+selected module/license projection against `VENDORED_COMMIT`. It uses the exact standalone copy in `tools/upstream-source`,
+whose source commit and SHA-256 hashes are recorded in `SOURCE.toml`. A clean checkout
+needs Python, Git and uv; no external checkout or separate verifier install is needed.
+Missing tooling, altered bundled files or changed vendor bytes fail the check. For
+isolated qualification, `UPSTREAM_SOURCE` may name one executable path; a missing
+override refuses verification without falling back.
+To refresh, review the recipe update first, then run `scripts/vendor-gmaps.sh FULL_COMMIT_SHA`.
+The command verifies the new source before replacing the vendor directory. Never edit it by hand.
 
 It is a deliberately small, polite client: one request at a time, about one a second, daily
 budgets, results cached in memory (places 6 h, walking and cycling routes 12 h, driving

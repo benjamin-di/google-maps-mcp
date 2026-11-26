@@ -29,6 +29,7 @@ finish() {
 }
 trap finish EXIT
 printf 'Evidence: %s\n' "$invocation"
+.venv/bin/python scripts/verify-vendor.py
 .venv/bin/ruff check src tests scripts
 .venv/bin/ruff format --check src tests scripts
 # The image installs requirements-runtime.lock; it must be exactly uv.lock's runtime set.

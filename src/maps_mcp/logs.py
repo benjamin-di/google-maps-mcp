@@ -21,7 +21,11 @@ from typing import Any
 from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import Middleware
 
+from . import identity
+from .identity import BUILD
+
 _RESERVED = frozenset(vars(logging.LogRecord("", 0, "", 0, "", None, None))) | {"message", "asctime"}
+_IDENTITY_FIELDS = {"service", "version", "source_revision", "instance"}
 
 
 class JsonFormatter(logging.Formatter):
@@ -33,7 +37,10 @@ class JsonFormatter(logging.Formatter):
         payload: dict[str, Any] = {
             "ts": datetime.fromtimestamp(record.created, UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
             "level": record.levelname,
-            "service": self.service,
+            "service": BUILD.service,
+            "version": BUILD.version,
+            "source_revision": BUILD.source_revision,
+            "instance": identity.INSTANCE,
             "component": record.name,
             "msg": record.getMessage(),
         }
@@ -43,6 +50,8 @@ class JsonFormatter(logging.Formatter):
             # event() carries its fields in one ``extras`` dict; flatten it.
             items = value.items() if key == "extras" and isinstance(value, dict) else [(key, value)]
             for name, item in items:
+                if name in _IDENTITY_FIELDS:
+                    continue
                 try:
                     json.dumps(item)
                     payload[name] = item
@@ -64,6 +73,13 @@ def setup(service: str) -> None:
     if level not in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
         level = "INFO"
     root.setLevel(level)
+    # FastMCP installs its own Rich handlers at import time. Keep its startup and
+    # protocol diagnostics on the same JSON stderr path, as well as uvicorn's.
+    for name in ("fastmcp", "uvicorn", "uvicorn.error", "uvicorn.access"):
+        logger = logging.getLogger(name)
+        logger.handlers.clear()
+        logger.propagate = True
+        logger.setLevel(max(logging.INFO, root.level))
     # The vendored library logs what it requests (search text, coordinates, ids) at INFO; tool
     # arguments are not logged, so it speaks only to warn.
     for noisy in ("uvicorn.access", "httpx", "httpcore", "maps_mcp.vendor"):

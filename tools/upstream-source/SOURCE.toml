@@ -1,0 +1,10 @@
+# Public source object identity and file checksums.
+source_commit = "7b0daece4cd6f59121aa5eac665230abe41dcb7a" # pragma: allowlist secret
+
+[source_paths]
+"upstream-source" = "bin/upstream-source"
+"upstream_source.py" = "bin/upstream_source.py"
+
+[sha256]
+"upstream-source" = "180ab45a6b9ffbed7049ede8b338362aacf80cb3f4ee934b18c70a9b4bb5a416" # pragma: allowlist secret
+"upstream_source.py" = "7c307fe75491e61ac0768714ca4c720463f18f50b594c67d3699d4403830e8d1" # pragma: allowlist secret

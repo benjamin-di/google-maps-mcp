@@ -1,6 +1,6 @@
 [project]
 name = "google-maps-keyless-mcp"
-version = "0.6.2"
+version = "0.7.1"
 description = "Read-only MCP server for Google Maps travel times, routes, places and map images, without an API key"
 readme = "README.md"
 license = "MIT"
@@ -45,6 +45,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/maps_mcp"]
+
+[tool.hatch.build]
+artifacts = ["src/maps_mcp/build_identity.json"]
 
 [project.scripts]
 google-maps-keyless-mcp = "maps_mcp.server:main"

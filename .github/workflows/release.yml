@@ -79,9 +79,12 @@ jobs:
           candidate="$IMAGE:sha-$(git rev-parse --short=12 HEAD)"
           docker buildx build --platform "$PLATFORMS" -f Dockerfile --push -t "$candidate" \
             --build-arg MAPS_MCP_DEPS_IMAGE="$deps" \
+            --build-arg VERSION="$version" \
             --build-arg VCS_REF="$GITHUB_SHA" \
             --build-arg BUILD_DATE="$(git show -s --format=%cI HEAD)" \
             --build-arg SOURCE_URL="https://github.com/$GITHUB_REPOSITORY" .
+          docker run --rm --network none --read-only --entrypoint python "$candidate" \
+            -c 'import sys; from maps_mcp.identity import BUILD; assert (BUILD.version, BUILD.source_revision) == tuple(sys.argv[1:])' "$version" "$GITHUB_SHA"
           # Smoke: HTTP refuses to start without a bearer; stdio answers initialize.
           rc=0
           docker run --rm --network none --tmpfs /state:uid=1000 "$candidate" || rc=$?

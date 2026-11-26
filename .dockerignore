@@ -1,4 +1,5 @@
 .git
+src/maps_mcp/build_identity.json
 .github
 .venv
 .deps
@@ -8,7 +9,8 @@
 **/.ruff_cache
 **/*.pyc
 tests
-scripts
+scripts/*
+!scripts/embed-build-identity.py
 docs
 google-cookies.json
 .env

@@ -1,0 +1,10 @@
+#!/usr/bin/env python3
+"""Verify a reviewed upstream source recipe. Exit status: 0 verified, 1 refused, 64 usage error."""
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from upstream_source import main
+
+if __name__ == "__main__":
+    sys.exit(main())

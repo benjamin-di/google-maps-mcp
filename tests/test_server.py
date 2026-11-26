@@ -110,6 +110,13 @@ def test_server_reports_its_own_version(service):
     assert server.create_server(service).version == __version__
 
 
+def test_instructions_stay_compact_and_cover_core_rules():
+    assert len(server.INSTRUCTIONS) < 1500
+    assert "Read-only" in server.INSTRUCTIONS
+    assert "maps_show_route" in server.INSTRUCTIONS and "maps_show_places" in server.INSTRUCTIONS
+    assert "next_step" in server.INSTRUCTIONS
+
+
 async def test_tools_end_to_end(service):
     async with Client(server.create_server(service)) as client:
         tools = {t.name: t for t in await client.list_tools()}

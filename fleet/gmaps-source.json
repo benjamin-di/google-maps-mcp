@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "source_kind": "maintained-fork",
+  "review": "https://github.com/benjamin-di/gmaps-scraper",
+  "upstream_url": "https://github.com/nick-choudhary/gmaps-scraper.git",
+  "fork_url": "https://github.com/benjamin-di/gmaps-scraper.git",
+  "baseline": "0c30632984db1ce6ee6c575d07d6ce2c4e742a65",
+  "baseline_ref": "refs/tags/v0.1.0",
+  "expected_tree": "b64420a34d879fe55284a5e56c87bd13899d1237",
+  "topics": [
+    {
+      "branch": "maintained-maps",
+      "commit": "fafeebe71aba7717f48ee144f682ac208c94b947",
+      "operation": "merge",
+      "kind": "contribution",
+      "allowed_added_commits": [
+        "92f75810d3e068e50eac930e42e5c01ae2317b7f",
+        "d827b05f0641d7019e6ca58b7a369f3a6797401d",
+        "bc1553380e46ad7826d598420146b5636ad5f633",
+        "1b6ece8572134b2d593ae88a4aba611ef8632c8f",
+        "03e77b47670c829940c4aaebb42fc5ea850434fc",
+        "7d679540584072c5ca0edfdc0fe226a9fbc556ca",
+        "5ac62114e413999297048f7cf542c970527a28b8",
+        "2ff857cfead235a4810f250114fa1f95f079783e",
+        "491aaca30b63335f56c226f79ed205c9083c62a6",
+        "062cfc17c132875fb7745dca407b5042742fcb21",
+        "2f591413d7a9f765dd0df08cd0a5c009f4a2f669",
+        "11a4518dacf32a292de5b4d74f6c6044acb09fc3",
+        "fafeebe71aba7717f48ee144f682ac208c94b947"
+      ]
+    }
+  ]
+}
